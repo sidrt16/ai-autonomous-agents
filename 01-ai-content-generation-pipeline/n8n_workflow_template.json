@@ -1,0 +1,267 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/images/generations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_OPENAI_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-image-2\",\n  \"prompt\": \"{{ $('JSON Parse JS').item.json.visual_desc }}. Instagram square format 1:1. Dark background. Professional. No people. Bold typography. Data visualization aesthetic.\",\n  \"size\": \"1024x1024\",\n  \"quality\": \"low\",\n  \"output_format\": \"jpeg\",\n  \"n\": 1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        512,
+        -864
+      ],
+      "id": "60ba1e72-3221-47d3-8c99-c514ce7e1b58",
+      "name": "DALL-E image"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 8
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -112,
+        -864
+      ],
+      "id": "28a4db8c-6da0-4219-8f89-e80061900d74",
+      "name": "Schedule"
+    },
+    {
+      "parameters": {
+        "jsCode": "let raw = $input.first().json.content[0].text;\nraw = raw.replace(/```json/g, '').replace(/```/g, '').trim();\nconst parsed = JSON.parse(raw);\nif (Array.isArray(parsed.hashtags)) {\n  parsed.hashtags = parsed.hashtags.join(' ');\n}\nreturn [{ json: parsed }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        -864
+      ],
+      "id": "7b4ec8d0-09ef-4eb2-9c74-b0c50e6f07ee",
+      "name": "JSON Parse JS"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "YOUR_ANTHROPIC_API_KEY"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 600,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Instagram post for AI Analytics niche. Audience: marketers who hate manual reporting. CRITICAL: Return ONLY raw JSON. No backticks. No markdown. Start with { end with }. Every post MUST be different. Rotate between these formats: stat-based (shocking number or percentage), story-based (before/after transformation), tip-based (one actionable trick), myth-busting (common belief vs reality), question-based (provocative question that stops the scroll). Pick a RANDOM format each time. Never repeat the same hook style twice. Fields: hook (1 sentence max 10 words, matches chosen format), script (50 words max), caption (start with hook, then 1 specific insight with a stat, end with 'Comment PROMPT and I ll DM you the template.' Max 80 words.), hashtags (10 relevant tags as single string), visual_desc (40 words max, must match the post format: stat-based=big number graphic on dark background, story-based=before/after split screen, tip-based=clean numbered checklist on dark background, myth-busting=crossed out myth with truth revealed, question-based=bold question text on dark background. No people. No stock photos. Bold white typography.)\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        96,
+        -864
+      ],
+      "id": "72b5b067-ecfe-480f-97f6-e79ee416169a",
+      "name": "Claude http"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v19.0/YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID/media",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image_url",
+              "value": "={{ $json.image_url }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $('JSON Parse JS').item.json.caption }}"
+            },
+            {
+              "name": "access_token",
+              "value": "YOUR_META_SYSTEM_USER_TOKEN"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        928,
+        -864
+      ],
+      "id": "a434a2c0-f832-4916-ac07-dd1cf85cb730",
+      "name": "Cloudinary image upload"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v19.0/YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID/media_publish",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"creation_id\": \"{{ $json.id }}\",\n  \"access_token\": \"YOUR_META_SYSTEM_USER_TOKEN"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1136,
+        -864
+      ],
+      "id": "4620ea6c-5260-44c4-af63-f64a637428e4",
+      "name": "Instagram post "
+    },
+    {
+      "parameters": {
+        "jsCode": "const base64Data = $input.first().json.data[0].b64_json;\n\nconst cloudName = \"YOUR_CLOUDINARY_CLOUD_NAME\";\nconst uploadPreset = \"ml_default\";\n\nconst response = await this.helpers.httpRequest({\n  method: \"POST\",\n  url: `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,\n  headers: { \"Content-Type\": \"application/json\" },\n  body: {\n    file: `data:image/jpeg;base64,${base64Data}`,\n    upload_preset: uploadPreset\n  },\n  json: true\n});\n\nreturn [{ json: { image_url: response.secure_url } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -864
+      ],
+      "id": "327303bd-4c80-42ad-9e2c-92c6ccec57eb",
+      "name": "JSON Parse - JS"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "DALL-E image": {
+      "main": [
+        [
+          {
+            "node": "JSON Parse - JS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule": {
+      "main": [
+        [
+          {
+            "node": "Claude http",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON Parse JS": {
+      "main": [
+        [
+          {
+            "node": "DALL-E image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude http": {
+      "main": [
+        [
+          {
+            "node": "JSON Parse JS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cloudinary image upload": {
+      "main": [
+        [
+          {
+            "node": "Instagram post ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON Parse - JS": {
+      "main": [
+        [
+          {
+            "node": "Cloudinary image upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "de43afc8-9388-44ef-9583-3ee2344b0fe3",
+  "meta": {
+    "instanceId": "bcf3bf5db3b9bdc34b8d14c7b1ae9805984ea81ce2ff9dd7d22e278fd60e5798"
+  },
+  "nodeGroups": [],
+  "id": "g5jsS1dOheFqPtAT",
+  "tags": []
+}

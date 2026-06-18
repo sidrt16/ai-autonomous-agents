@@ -6,7 +6,7 @@ A collection of AI-powered automation projects built with Claude, n8n, and vario
 
 | # | Project | Description | Status |
 |---|---|---|---|
-| 01 | AI-Powered Content Generation Pipeline | Automated Instagram posting using Claude + gpt-image-2 + Meta API | ✅ Live |
+| 01 | [AI-Powered Content Generation Pipeline](./01-ai-content-generation-pipeline/) | Automated Instagram posting using Claude + gpt-image-2 + Meta API | ✅ Live |
 
 ## How to use
 

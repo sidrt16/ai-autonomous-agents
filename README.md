@@ -10,5 +10,5 @@ A collection of AI-powered automation projects built with Claude, n8n, and vario
 
 ## How to use
 
-Each project contains a `SKILL.md` file — a complete knowledge document 
+Each project contains a 'SKILL- AI-Powered Content Generation Pipeline.md' file — a complete knowledge document 
 you can plug into any AI assistant to get started immediately.

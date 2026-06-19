@@ -122,8 +122,8 @@ def google_login(write: bool = False, mp_session: Optional[str] = Cookie(None)):
     redirect_uri = f"{os.getenv('APP_BASE_URL', 'http://localhost:8000')}/auth/google/callback"
     state = secrets.token_urlsafe(16)
     _sessions[state] = user_id
-    url = google_client.get_login_url(include_write_scope=write, redirect_uri=redirect_uri)
-    return RedirectResponse(url + f"&state={state}")
+    url = google_client.get_login_url(include_write_scope=write, redirect_uri=redirect_uri, state=state)
+    return RedirectResponse(url)
  
  
 @app.get("/auth/google/callback")
@@ -150,8 +150,8 @@ def outlook_login(write: bool = False, mp_session: Optional[str] = Cookie(None))
     redirect_uri = f"{os.getenv('APP_BASE_URL', 'http://localhost:8000')}/auth/outlook/callback"
     state = secrets.token_urlsafe(16)
     _sessions[state] = user_id
-    url = outlook_client.get_login_url(include_write_scope=write, redirect_uri=redirect_uri)
-    return RedirectResponse(url + f"&state={state}")
+    url = outlook_client.get_login_url(include_write_scope=write, redirect_uri=redirect_uri, state=state)
+    return RedirectResponse(url)
  
  
 @app.get("/auth/outlook/callback")

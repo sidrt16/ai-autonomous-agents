@@ -2,9 +2,9 @@ from typing import Optional
 import msal
 import httpx
 
-from app.config import settings
-from app.schemas import NormalizedMeeting, Attendee
-from app.normalize import extract_agenda, extract_join_link
+from config import settings
+from schemas import NormalizedMeeting, Attendee
+from normalize import extract_agenda, extract_join_link
 
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 

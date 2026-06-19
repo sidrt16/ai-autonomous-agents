@@ -9,24 +9,24 @@ from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import google_client, outlook_client, agent, prompt_builder
-from app.config import settings
-from app.schemas import (
+import google_client, outlook_client, agent, prompt_builder
+from config import settings
+from schemas import (
     ChecklistPayload, StandingTemplate, AddReminderRequest,
     NormalizedMeeting, ProfileRequest, MeetingSetupRequest,
 )
-from app.user_store import (
+from user_store import (
     get_google_token, set_google_token,
     get_user_profile, set_user_profile,
     get_user_templates, set_user_template,
     get_user,
 )
-from app.zoom_auth import (
+from zoom_auth import (
     get_zoom_auth_url, exchange_zoom_code, get_zoom_user,
     make_session_token, read_session_token, SESSION_COOKIE,
 )
-from app.storage import JSONStore
-from app.calendar_write import request_confirmation_token, ConfirmationError, WriteNotAuthorized
+from storage import JSONStore
+from calendar_write import request_confirmation_token, ConfirmationError, WriteNotAuthorized
 
 import os
 _sessions = {}  # state -> zoom_user_id (in-memory CSRF store)
@@ -160,7 +160,7 @@ def outlook_callback(code: str, state: str = "", write: bool = False):
     redirect_uri = f"{os.getenv('APP_BASE_URL', 'http://localhost:8000')}/auth/outlook/callback"
     try:
         token_data = outlook_client.handle_callback(code, include_write_scope=write, redirect_uri=redirect_uri)
-        from app.user_store import set_user
+        from user_store import set_user
         set_user(user_id, {"outlook_token": token_data})
         return JSONResponse({"status": "outlook connected"})
     except Exception as e:
@@ -240,7 +240,7 @@ def meeting_checklist(source: str, event_id: str, mp_session: Optional[str] = Co
     templates = get_user_templates(user_id)
     matched = None
     if meeting.series_key and meeting.series_key in templates:
-        from app.schemas import StandingTemplate
+        from schemas import StandingTemplate
         matched = StandingTemplate(**templates[meeting.series_key])
 
     needs_manual = ["goals", "must_ask_questions", "boundary_overrides"]
@@ -368,7 +368,7 @@ def add_reminder(
     user_id = _get_user_id(mp_session)
     user_data = get_user(user_id)
 
-    from app.calendar_write import _consume_token
+    from calendar_write import _consume_token
     try:
         _consume_token(source, event_id, req)
     except ConfirmationError as e:

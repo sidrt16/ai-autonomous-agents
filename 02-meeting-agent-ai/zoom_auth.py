@@ -13,7 +13,7 @@ import requests
 from base64 import b64encode
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
-from app.config import settings
+from config import settings
 
 SESSION_COOKIE = "mp_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days

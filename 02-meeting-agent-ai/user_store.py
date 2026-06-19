@@ -4,7 +4,7 @@ JSON file keyed by zoom_user_id. Replaces the single-user token_store
 used in local dev — same JSONStore underneath, different key scheme.
 """
 import os
-from app.storage import JSONStore
+from storage import JSONStore
 
 _store = JSONStore(os.getenv("USER_STORE_PATH", "user_store.json"))
 

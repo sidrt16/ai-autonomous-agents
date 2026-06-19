@@ -2,7 +2,7 @@
 Builds the filled agent system prompt from a ChecklistPayload + user profile.
 This is what gets loaded into the agent at meeting start.
 """
-from app.schemas import ChecklistPayload
+from schemas import ChecklistPayload
 
 
 def build_system_prompt(

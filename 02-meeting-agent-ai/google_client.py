@@ -3,9 +3,9 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from app.config import settings
-from app.schemas import NormalizedMeeting, Attendee
-from app.normalize import extract_agenda, extract_join_link
+from config import settings
+from schemas import NormalizedMeeting, Attendee
+from normalize import extract_agenda, extract_join_link
 
 
 def _flow(scopes, redirect_uri=None) -> Flow:

@@ -4,7 +4,7 @@ calls Claude, returns a response or None (SILENT).
 Post-meeting: produces all four deliverables.
 """
 import anthropic
-from app.config import settings
+from config import settings
 
 _client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 

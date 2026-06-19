@@ -1,31 +1,31 @@
 from typing import Optional
 import msal
 import httpx
-
+ 
 from config import settings
 from schemas import NormalizedMeeting, Attendee
 from normalize import extract_agenda, extract_join_link
-
+ 
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-
-
+ 
+ 
 def _msal_app() -> msal.ConfidentialClientApplication:
     return msal.ConfidentialClientApplication(
         client_id=settings.MS_CLIENT_ID,
         client_credential=settings.MS_CLIENT_SECRET,
         authority=f"https://login.microsoftonline.com/{settings.MS_TENANT_ID}",
     )
-
-
-def get_login_url(include_write_scope: bool = False, redirect_uri: str = None) -> str:
+ 
+ 
+def get_login_url(include_write_scope: bool = False, redirect_uri: str = None, state: str = None) -> str:
     scopes = settings.MS_SCOPES_READONLY + (
         settings.MS_SCOPES_OWN_CALENDAR_EVENTS if include_write_scope else []
     )
     return _msal_app().get_authorization_request_url(
-        scopes, redirect_uri=redirect_uri or settings.MS_REDIRECT_URI
+        scopes, redirect_uri=redirect_uri or settings.MS_REDIRECT_URI, state=state
     )
-
-
+ 
+ 
 def handle_callback(code: str, include_write_scope: bool = False, redirect_uri: str = None) -> dict:
     scopes = settings.MS_SCOPES_READONLY + (
         settings.MS_SCOPES_OWN_CALENDAR_EVENTS if include_write_scope else []
@@ -40,16 +40,16 @@ def handle_callback(code: str, include_write_scope: bool = False, redirect_uri: 
         "refresh_token": result.get("refresh_token"),
         "scopes": scopes,
     }
-
-
+ 
+ 
 def has_write_scope(token_data: dict) -> bool:
     return "Calendars.ReadWrite" in token_data.get("scopes", [])
-
-
+ 
+ 
 def _headers(token_data: dict) -> dict:
     return {"Authorization": f"Bearer {token_data['access_token']}"}
-
-
+ 
+ 
 def _normalize_event(raw: dict) -> NormalizedMeeting:
     body = (raw.get("body") or {}).get("content")
     agenda = extract_agenda(body)
@@ -77,8 +77,8 @@ def _normalize_event(raw: dict) -> NormalizedMeeting:
         join_link=extract_join_link(body) or (raw.get("onlineMeeting") or {}).get("joinUrl"),
         is_recurring=bool(raw.get("seriesMasterId")),
     )
-
-
+ 
+ 
 def list_upcoming(token_data: dict, hours: int = 24) -> list[NormalizedMeeting]:
     import datetime
     now = datetime.datetime.utcnow()
@@ -91,14 +91,14 @@ def list_upcoming(token_data: dict, hours: int = 24) -> list[NormalizedMeeting]:
     resp = httpx.get(f"{_GRAPH_BASE}/me/calendarView", headers=_headers(token_data), params=params)
     resp.raise_for_status()
     return [_normalize_event(e) for e in resp.json().get("value", [])]
-
-
+ 
+ 
 def get_event(token_data: dict, event_id: str) -> NormalizedMeeting:
     resp = httpx.get(f"{_GRAPH_BASE}/me/events/{event_id}", headers=_headers(token_data))
     resp.raise_for_status()
     return _normalize_event(resp.json())
-
-
+ 
+ 
 def create_event(token_data: dict, body: dict) -> dict:
     resp = httpx.post(f"{_GRAPH_BASE}/me/events", headers=_headers(token_data), json=body)
     resp.raise_for_status()

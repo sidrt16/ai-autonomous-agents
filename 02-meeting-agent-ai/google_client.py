@@ -1,13 +1,14 @@
+
 from typing import Optional
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-
+ 
 from config import settings
 from schemas import NormalizedMeeting, Attendee
 from normalize import extract_agenda, extract_join_link
-
-
+ 
+ 
 def _flow(scopes, redirect_uri=None) -> Flow:
     return Flow.from_client_config(
         {
@@ -22,19 +23,20 @@ def _flow(scopes, redirect_uri=None) -> Flow:
         scopes=scopes,
         redirect_uri=redirect_uri or settings.GOOGLE_REDIRECT_URI,
     )
-
-
-def get_login_url(include_write_scope: bool = False, redirect_uri: str = None) -> str:
+ 
+ 
+def get_login_url(include_write_scope: bool = False, redirect_uri: str = None, state: str = None) -> str:
     scopes = settings.GOOGLE_SCOPES_READONLY + (
         settings.GOOGLE_SCOPES_OWN_CALENDAR_EVENTS if include_write_scope else []
     )
     flow = _flow(scopes, redirect_uri)
     auth_url, _ = flow.authorization_url(
-        access_type="offline", prompt="consent", include_granted_scopes="true"
+        access_type="offline", prompt="consent", include_granted_scopes="true",
+        state=state
     )
     return auth_url
-
-
+ 
+ 
 def handle_callback(code: str, include_write_scope: bool = False, redirect_uri: str = None) -> dict:
     scopes = settings.GOOGLE_SCOPES_READONLY + (
         settings.GOOGLE_SCOPES_OWN_CALENDAR_EVENTS if include_write_scope else []
@@ -52,13 +54,13 @@ def handle_callback(code: str, include_write_scope: bool = False, redirect_uri: 
         "client_secret": creds.client_secret,
         "scopes": granted_scopes,
     }
-
-
+ 
+ 
 def has_write_scope(token_data: dict) -> bool:
     granted = set(token_data.get("scopes", []))
     return set(settings.GOOGLE_SCOPES_OWN_CALENDAR_EVENTS).issubset(granted)
-
-
+ 
+ 
 def _get_credentials(token_data: dict) -> Credentials:
     return Credentials(
         token=token_data["token"],
@@ -68,12 +70,12 @@ def _get_credentials(token_data: dict) -> Credentials:
         client_secret=token_data["client_secret"],
         scopes=token_data["scopes"],
     )
-
-
+ 
+ 
 def _service(token_data: dict):
     return build("calendar", "v3", credentials=_get_credentials(token_data))
-
-
+ 
+ 
 def _normalize_event(raw: dict) -> NormalizedMeeting:
     description = raw.get("description")
     attendees = [
@@ -103,8 +105,8 @@ def _normalize_event(raw: dict) -> NormalizedMeeting:
         join_link=extract_join_link(description) or raw.get("hangoutLink"),
         is_recurring=bool(raw.get("recurringEventId") or raw.get("recurrence")),
     )
-
-
+ 
+ 
 def list_upcoming(token_data: dict, hours: int = 24) -> list[NormalizedMeeting]:
     import datetime
     svc = _service(token_data)
@@ -122,14 +124,14 @@ def list_upcoming(token_data: dict, hours: int = 24) -> list[NormalizedMeeting]:
         .execute()
     )
     return [_normalize_event(e) for e in resp.get("items", [])]
-
-
+ 
+ 
 def get_event(token_data: dict, event_id: str) -> NormalizedMeeting:
     svc = _service(token_data)
     raw = svc.events().get(calendarId="primary", eventId=event_id).execute()
     return _normalize_event(raw)
-
-
+ 
+ 
 def create_event(token_data: dict, body: dict) -> dict:
     svc = _service(token_data)
     return svc.events().insert(calendarId="primary", body=body).execute()

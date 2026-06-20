@@ -78,6 +78,9 @@ def _connect_result_page(success: bool, provider: str, detail: str = "") -> HTML
     so explicitly rather than redirecting into a confusing second app view."""
     title = f"{provider} connected" if success else f"{provider} connection failed"
     color = "#2f9e44" if success else "#e03131"
+    check_mark = "✓"
+    x_mark = "✕"
+    emoji = check_mark if success else x_mark
     body = detail or (
         "You can close this tab and go back to the app in Zoom."
         if success
@@ -91,7 +94,7 @@ body {{ font-family:-apple-system,sans-serif; display:flex; align-items:center;
 h1 {{ font-size:16px; color:{color}; margin-bottom:8px; }}
 p {{ font-size:13px; color:#666; line-height:1.5; }}
 </style></head>
-<body><div class="card"><h1>{'\u2713' if success else '\u2715'} {title}</h1><p>{body}</p></div>
+<body><div class="card"><h1>{emoji} {title}</h1><p>{body}</p></div>
 <script>setTimeout(function(){{ try {{ window.close(); }} catch(e) {{}} }}, 2500);</script>
 </body></html>"""
     return HTMLResponse(content=html)

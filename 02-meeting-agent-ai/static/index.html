@@ -82,7 +82,6 @@ textarea{resize:vertical;min-height:60px}
 .copy-btn{font-size:11px;padding:4px 11px;border-radius:6px;background:#f0f0ee;border:1px solid #ddd;cursor:pointer;margin-top:6px}
 .error{font-size:12px;color:#dc2626;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 9px;margin-top:4px}
 </style>
-<script src="https://appssdk.zoom.us/sdk.js"></script>
 </head>
 <body>
 
@@ -314,29 +313,35 @@ function updateCalendarButtons(google, outlook) {
   });
 }
 
-async function connectGoogle() {
-  const url = window.location.origin + '/auth/google/login?write=true';
-  try {
-    if (window.zoomSdk) {
-      await zoomSdk.openUrl({ url: url });
-    } else {
-      window.open(url, '_blank');
-    }
-  } catch(e) {
-    window.open(url, '_blank');
-  }
-}
-async function connectOutlook() {
-  const url = window.location.origin + '/auth/outlook/login';
-  try {
-    if (window.zoomSdk) {
-      await zoomSdk.openUrl({ url: url });
-    } else {
-      window.open(url, '_blank');
-    }
-  } catch(e) {
-    window.open(url, '_blank');
-  }
+function connectGoogle() { showConnectModal('/auth/google/login?write=true', 'Google Calendar'); }
+function connectOutlook() { showConnectModal('/auth/outlook/login', 'Outlook Calendar'); }
+
+function showConnectModal(path, name) {
+  const url = window.location.origin + path;
+  const existing = document.getElementById('connect-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'connect-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;max-width:320px;width:100%;font-family:-apple-system,sans-serif">
+      <div style="font-size:15px;font-weight:500;color:#1a1a18;margin-bottom:8px">Connect ${name}</div>
+      <div style="font-size:13px;color:#666;margin-bottom:16px;line-height:1.5">
+        Click the button below to open Google sign-in. After connecting, return to this app.
+      </div>
+      <a href="${url}" style="display:block;background:#3b5bdb;color:#fff;border-radius:8px;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:500;margin-bottom:10px">
+        Open ${name} sign-in
+      </a>
+      <button onclick="document.getElementById('connect-modal').remove();loadMe();loadMeetings();" 
+        style="width:100%;padding:8px;border-radius:8px;border:1px solid #ddd;background:#f5f5f3;font-size:13px;cursor:pointer;color:#333">
+        I've connected — refresh
+      </button>
+      <button onclick="document.getElementById('connect-modal').remove()" 
+        style="width:100%;padding:6px;border-radius:8px;border:none;background:none;font-size:12px;cursor:pointer;color:#888;margin-top:4px">
+        Cancel
+      </button>
+    </div>`;
+  document.body.appendChild(modal);
 }
 
 async function loadMeetings() {

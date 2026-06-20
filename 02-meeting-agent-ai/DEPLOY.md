@@ -3,20 +3,19 @@
 ## Step 1 — Push to GitHub
 
 ```bash
-cd "/Users/siddharthpawar/Downloads/Meeting Agent"
+cd "/Users/[YOUR_USERNAME]/Downloads/Meeting Agent"
 
 # Clone your repo
-git clone https://github.com/sidrt16/ai-autonomous-agents.git
-cd ai-autonomous-agents
+git clone [https://github.com/](https://github.com/)[YOUR_GITHUB_USERNAME]/[YOUR_REPO_NAME].git
+cd [YOUR_REPO_NAME]
 
 # Copy the meeting proxy folder in
-cp -r "/Users/siddharthpawar/Downloads/Meeting Agent/meeting-proxy-agent" .
+cp -r "/Users/[YOUR_USERNAME]/Downloads/Meeting Agent/meeting-proxy-agent" .
 
 cd meeting-proxy-agent
 git add .
 git commit -m "add meeting proxy agent"
 git push
-```
 
 ## Step 2 — Deploy on Render
 

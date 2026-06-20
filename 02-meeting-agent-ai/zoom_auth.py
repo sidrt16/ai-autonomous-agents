@@ -18,6 +18,13 @@ from config import settings
 SESSION_COOKIE = "mp_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
+# Short-lived bridge token: minted while still inside Zoom's authenticated
+# webview (so the mp_session cookie is available), then carried as a query
+# param into the external browser, where that cookie can't follow. This is
+# what lets /auth/google/login and /auth/outlook/login know who's connecting
+# even on a request with no cookie at all.
+CONNECT_TOKEN_MAX_AGE = 60 * 10  # 10 minutes — long enough to click through Google's consent screen, short enough to not be a standing risk if leaked (e.g. via a shared screen or browser history)
+
 _signer = URLSafeTimedSerializer(settings.APP_SECRET_KEY)
 
 ZOOM_TOKEN_URL = "https://zoom.us/oauth/token"
@@ -72,5 +79,18 @@ def make_session_token(zoom_user_id: str) -> str:
 def read_session_token(token: str) -> str | None:
     try:
         return _signer.loads(token, max_age=SESSION_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return None
+
+
+def make_connect_token(zoom_user_id: str) -> str:
+    return _signer.dumps(zoom_user_id, salt="connect-token")
+
+
+def read_connect_token(token: str) -> str | None:
+    """Distinct salt from session tokens — a leaked/expired connect token
+    can never be replayed as a session cookie, or vice versa."""
+    try:
+        return _signer.loads(token, max_age=CONNECT_TOKEN_MAX_AGE, salt="connect-token")
     except (BadSignature, SignatureExpired):
         return None

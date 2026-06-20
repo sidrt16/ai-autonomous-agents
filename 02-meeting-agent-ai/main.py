@@ -24,6 +24,7 @@ from user_store import (
 from zoom_auth import (
     get_zoom_auth_url, exchange_zoom_code, get_zoom_user,
     make_session_token, read_session_token, SESSION_COOKIE,
+    make_connect_token, read_connect_token, CONNECT_TOKEN_MAX_AGE,
 )
 from storage import JSONStore
 from calendar_write import request_confirmation_token, ConfirmationError, WriteNotAuthorized
@@ -78,6 +79,32 @@ def _get_user_id(mp_session: Optional[str]) -> str:
     return uid
 
 
+def _get_user_id_for_oauth_start(mp_session: Optional[str], connect_token: Optional[str]) -> str:
+    """Like _get_user_id, but also accepts a one-time connect_token.
+
+    The OAuth login routes get opened in the system browser (Zoom blocks
+    in-app navigation to external URLs), which means the mp_session cookie
+    — set inside Zoom's own embedded webview — never arrives on this
+    request. There's no way around that; cookies don't cross browser
+    processes. connect_token is the bridge: minted via /api/connect-token
+    while still inside Zoom (where the cookie IS present), then passed
+    along in the link we open externally instead.
+    """
+    if mp_session:
+        uid = read_session_token(mp_session)
+        if uid:
+            return uid
+    if connect_token:
+        uid = read_connect_token(connect_token)
+        if uid:
+            return uid
+    raise HTTPException(
+        401,
+        "Not authenticated, or your connect link expired (valid "
+        f"{CONNECT_TOKEN_MAX_AGE // 60} minutes) — go back into Zoom and click connect again",
+    )
+
+
 def _get_google_token_or_401(user_id: str) -> dict:
     token = get_google_token(user_id)
     if not token:
@@ -130,13 +157,26 @@ def zoom_callback(code: str, response: Response, state: Optional[str] = None):
         raise HTTPException(400, str(e))
 
 
+@app.get("/api/connect-token")
+def connect_token(mp_session: Optional[str] = Cookie(None)):
+    """Call this from inside the Zoom webview (cookie present) right before
+    opening a Google/Outlook connect link externally (cookie absent).
+    The frontend appends the result to the login URL as ?connect_token=..."""
+    user_id = _get_user_id(mp_session)
+    return {"connect_token": make_connect_token(user_id), "expires_in": CONNECT_TOKEN_MAX_AGE}
+
+
 # ---------------------------------------------------------------------------
 # Google Calendar OAuth — per user
 # ---------------------------------------------------------------------------
 
 @app.get("/auth/google/login")
-def google_login(write: bool = False, mp_session: Optional[str] = Cookie(None)):
-    user_id = _get_user_id(mp_session)
+def google_login(
+    write: bool = False,
+    connect_token: Optional[str] = None,
+    mp_session: Optional[str] = Cookie(None),
+):
+    user_id = _get_user_id_for_oauth_start(mp_session, connect_token)
     redirect_uri = f"{os.getenv('APP_BASE_URL', 'http://localhost:8000')}/auth/google/callback"
     state = secrets.token_urlsafe(16)
     _sessions[state] = user_id
@@ -163,8 +203,12 @@ def google_callback(code: str, state: str = "", write: bool = False):
 # ---------------------------------------------------------------------------
 
 @app.get("/auth/outlook/login")
-def outlook_login(write: bool = False, mp_session: Optional[str] = Cookie(None)):
-    user_id = _get_user_id(mp_session)
+def outlook_login(
+    write: bool = False,
+    connect_token: Optional[str] = None,
+    mp_session: Optional[str] = Cookie(None),
+):
+    user_id = _get_user_id_for_oauth_start(mp_session, connect_token)
     redirect_uri = f"{os.getenv('APP_BASE_URL', 'http://localhost:8000')}/auth/outlook/callback"
     state = secrets.token_urlsafe(16)
     _sessions[state] = user_id

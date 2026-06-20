@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -312,8 +313,51 @@ function updateCalendarButtons(google, outlook) {
   });
 }
 
-function connectGoogle() { window.open('/auth/google/login?write=true', '_blank'); }
-function connectOutlook() { window.open('/auth/outlook/login', '_blank'); }
+function connectGoogle() { openConnectModal('/auth/google/login?write=true', 'Google Calendar'); }
+function connectOutlook() { openConnectModal('/auth/outlook/login', 'Outlook Calendar'); }
+
+async function openConnectModal(path, name) {
+  // Mint a connect token now, while this fetch is still happening inside
+  // Zoom's webview (mp_session cookie present). The link we're about to
+  // open externally won't have that cookie, so we carry this token instead.
+  let fullPath = path;
+  try {
+    const tok = await api('/api/connect-token');
+    fullPath += (path.includes('?') ? '&' : '?') + 'connect_token=' + encodeURIComponent(tok.connect_token);
+  } catch (e) {
+    alert("Couldn't start the connection (" + e.message + "). Try reloading the app inside Zoom.");
+    return;
+  }
+  showConnectModal(fullPath, name);
+}
+
+function showConnectModal(path, name) {
+  const url = window.location.origin + path;
+  const existing = document.getElementById('connect-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'connect-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;max-width:320px;width:100%;font-family:-apple-system,sans-serif">
+      <div style="font-size:15px;font-weight:500;color:#1a1a18;margin-bottom:8px">Connect ${name}</div>
+      <div style="font-size:13px;color:#666;margin-bottom:16px;line-height:1.5">
+        Click the button below to open Google sign-in. After connecting, return to this app.
+      </div>
+      <a href="${url}" style="display:block;background:#3b5bdb;color:#fff;border-radius:8px;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:500;margin-bottom:10px">
+        Open ${name} sign-in
+      </a>
+      <button onclick="document.getElementById('connect-modal').remove();loadMe();loadMeetings();" 
+        style="width:100%;padding:8px;border-radius:8px;border:1px solid #ddd;background:#f5f5f3;font-size:13px;cursor:pointer;color:#333">
+        I've connected — refresh
+      </button>
+      <button onclick="document.getElementById('connect-modal').remove()" 
+        style="width:100%;padding:6px;border-radius:8px;border:none;background:none;font-size:12px;cursor:pointer;color:#888;margin-top:4px">
+        Cancel
+      </button>
+    </div>`;
+  document.body.appendChild(modal);
+}
 
 async function loadMeetings() {
   const list = document.getElementById('meetings-list');
@@ -571,6 +615,17 @@ function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repla
 document.getElementById('text-input').addEventListener('keydown', e => { if(e.key==='Enter') sendTranscript(); });
 
 window.addEventListener('load', async () => {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('connected')) {
+    const which = params.get('connected');
+    const msg = which === 'google' ? 'Google Calendar connected!' : 'Outlook connected!';
+    const banner = document.createElement('div');
+    banner.style.cssText = 'background:#f0fdf4;border:1px solid #22c55e;color:#166534;padding:8px 14px;font-size:13px;text-align:center;position:fixed;top:0;left:0;right:0;z-index:999';
+    banner.textContent = '✓ ' + msg;
+    document.body.prepend(banner);
+    setTimeout(() => banner.remove(), 3000);
+    window.history.replaceState({}, '', '/app');
+  }
   await loadMe();
   await loadMeetings();
 });

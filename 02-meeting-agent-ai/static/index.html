@@ -313,8 +313,16 @@ function updateCalendarButtons(google, outlook) {
   });
 }
 
-function connectGoogle() { window.open('/auth/google/login?write=true', '_blank'); }
-function connectOutlook() { window.open('/auth/outlook/login', '_blank'); }
+function connectGoogle() {
+  const inZoom = navigator.userAgent.includes('ZoomWebkit') || window.self !== window.top;
+  if (inZoom) { window.location.href = '/auth/google/login?write=true'; }
+  else { window.open('/auth/google/login?write=true', '_blank'); }
+}
+function connectOutlook() {
+  const inZoom = navigator.userAgent.includes('ZoomWebkit') || window.self !== window.top;
+  if (inZoom) { window.location.href = '/auth/outlook/login'; }
+  else { window.open('/auth/outlook/login', '_blank'); }
+}
 
 async function loadMeetings() {
   const list = document.getElementById('meetings-list');

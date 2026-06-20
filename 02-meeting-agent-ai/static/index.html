@@ -313,8 +313,23 @@ function updateCalendarButtons(google, outlook) {
   });
 }
 
-function connectGoogle() { showConnectModal('/auth/google/login?write=true', 'Google Calendar'); }
-function connectOutlook() { showConnectModal('/auth/outlook/login', 'Outlook Calendar'); }
+function connectGoogle() { openConnectModal('/auth/google/login?write=true', 'Google Calendar'); }
+function connectOutlook() { openConnectModal('/auth/outlook/login', 'Outlook Calendar'); }
+
+async function openConnectModal(path, name) {
+  // Mint a connect token now, while this fetch is still happening inside
+  // Zoom's webview (mp_session cookie present). The link we're about to
+  // open externally won't have that cookie, so we carry this token instead.
+  let fullPath = path;
+  try {
+    const tok = await api('/api/connect-token');
+    fullPath += (path.includes('?') ? '&' : '?') + 'connect_token=' + encodeURIComponent(tok.connect_token);
+  } catch (e) {
+    alert("Couldn't start the connection (" + e.message + "). Try reloading the app inside Zoom.");
+    return;
+  }
+  showConnectModal(fullPath, name);
+}
 
 function showConnectModal(path, name) {
   const url = window.location.origin + path;
@@ -329,7 +344,7 @@ function showConnectModal(path, name) {
       <div style="font-size:13px;color:#666;margin-bottom:16px;line-height:1.5">
         Click the button below to open Google sign-in. After connecting, return to this app.
       </div>
-      <a href="${url}" style="display:block;background:#3b5bdb;color:#fff;border-radius:8px;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:500;margin-bottom:10px">
+      <a href="${url}" target="_blank" rel="noopener noreferrer" style="display:block;background:#3b5bdb;color:#fff;border-radius:8px;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:500;margin-bottom:10px">
         Open ${name} sign-in
       </a>
       <button onclick="document.getElementById('connect-modal').remove();loadMe();loadMeetings();" 

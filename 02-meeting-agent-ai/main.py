@@ -23,7 +23,7 @@ from zoom_auth import read_session_token
 
 app = FastAPI(title="Meeting Proxy")
 
-# CORS Setup
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -49,10 +49,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Mount static folder securely
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Runtime in-memory registry for active meeting contexts
-_meeting_sessions = {}  # meeting_id/zoom_user_id -> {history, system_prompt, metadata}
+_meeting_sessions = {}
 
 def _get_user_id(mp_session: Optional[str]) -> str:
     if not mp_session:
@@ -84,21 +87,35 @@ def promote_active_proxy(req: ActiveProxySetupRequest, mp_session: Optional[str]
     user_id = _get_user_id(mp_session)
     profile = get_user_profile(user_id)
     
-    # Structural shim transforming active Zoom runtime fields into agent prompt schema
+    # Structural shim mapping current Zoom UI states to template schema names
     mock_meeting_schema = {
         "title": req.title,
         "event_id": req.meeting_id,
         "agenda_missing": not bool(req.goals)
     }
     
-    # Construct complete high-fidelity context payload for Claude
-    system_prompt = prompt_builder.build_system_prompt(
-        profile=profile,
-        meeting=mock_meeting_schema,
-        setup=req
-    )
+    # Structural dictionary translation ensuring prompt_builder reads valid matching keys
+    setup_dict = {
+        "standing_goals": req.goals,
+        "relationship_context": f"Active Live Meeting Proxy. Target Avoidance Guardrail: {req.avoid or 'None'}",
+        "boundary_financial_cap": req.financial_cap,
+        "boundary_timeline_cap": req.timeline_cap,
+        "off_limits_topics": req.off_limits,
+        "formality": req.formality,
+        "directness": req.directness
+    }
     
-    # Bind session history container keying directly on the live meeting ID
+    try:
+        # Build system matrix prompt using clean schema dictionary
+        system_prompt = prompt_builder.build_system_prompt(
+            profile=profile,
+            meeting=mock_meeting_schema,
+            setup=setup_dict
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prompt Compilation Failure: {str(e)}")
+    
+    # Bind running variables securely to active session tracking dictionaries
     _meeting_sessions[req.meeting_id] = {
         "history": [],
         "system_prompt": system_prompt,
@@ -132,7 +149,7 @@ def end_meeting_proxy(meeting_id: str):
     return {"deliverables": deliverables}
 
 # ---------------------------------------------------------------------------
-# Settings & Global Profiles Management
+# Profile Persistence Pass-Through Endpoints
 # ---------------------------------------------------------------------------
 
 @app.post("/api/profile")

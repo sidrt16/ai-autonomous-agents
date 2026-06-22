@@ -1,11 +1,10 @@
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Meeting Proxy</title>
+<script src="https://appssdk.zoom.us/sdk.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;line-height:1.5;background:#fff;color:#1a1a18;height:100vh;display:flex;flex-direction:column}
@@ -31,611 +30,136 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-siz
 .meeting-item.sel{border:1.5px solid #3b5bdb;background:#eff6ff}
 .meeting-title{font-size:13px;font-weight:500;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .meeting-meta{font-size:11px;color:#888}
-.mb{font-size:10px;padding:2px 6px;border-radius:8px;margin-top:3px;display:inline-block}
-.mb-ok{background:#dcfce7;color:#166534}
-.mb-warn{background:#fef9c3;color:#854d0e}
-input,textarea,select{width:100%;padding:7px 9px;border:1px solid #ddd;border-radius:7px;font-size:13px;font-family:inherit;background:#fff;color:#1a1a18}
-input:focus,textarea:focus{outline:none;border-color:#3b5bdb}
-textarea{resize:vertical;min-height:60px}
-.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.pill-group{display:flex;flex-wrap:wrap;gap:6px;margin-top:3px}
-.pill{padding:3px 10px;border-radius:16px;font-size:12px;border:1px solid #ddd;cursor:pointer;background:#f5f5f3;transition:all .15s}
-.pill.on{background:#1a1a18;color:#fff;border-color:#1a1a18}
-.btn{width:100%;padding:9px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:background .15s}
+input,textarea,select{width:100%;padding:7px 9px;border:1px solid #ddd;border-radius:7px;font-size:13px;font-family:inherit;background:#fff}
+.btn{width:100%;padding:9px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none}
 .btn-primary{background:#3b5bdb;color:#fff}
 .btn-primary:hover{background:#2f4cc0}
-.btn-primary:disabled{background:#c0c9f5;cursor:not-allowed}
-.btn-secondary{background:#f0f0ee;color:#333}
-.transcript-row{margin-bottom:8px}
-.sp-name{font-size:10px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
-.sp-text{font-size:12px;background:#f5f5f3;border-radius:7px;padding:6px 8px;line-height:1.45}
-.agent-block{margin-bottom:10px}
-.agent-label{font-size:10px;font-weight:600;color:#3b5bdb;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px;display:flex;align-items:center;gap:5px}
-.flag-note{font-size:10px;color:#b45309;font-weight:400;margin-left:4px}
-.agent-bubble{font-size:12px;background:#eff6ff;border:1px solid #c7d0f5;border-radius:7px;padding:7px 9px;line-height:1.45;color:#1e3a8a}
-.approve-btns{display:flex;gap:6px;margin-top:5px}
-.btn-send{font-size:11px;padding:4px 11px;border-radius:6px;background:#3b5bdb;color:#fff;border:none;cursor:pointer}
-.btn-edit{font-size:11px;padding:4px 11px;border-radius:6px;background:#f0f0ee;color:#333;border:1px solid #ddd;cursor:pointer}
-.typing{display:flex;align-items:center;gap:5px;padding:4px 0}
-.typing span{width:5px;height:5px;border-radius:50%;background:#3b5bdb;animation:blink 1.2s infinite}
-.typing span:nth-child(2){animation-delay:.2s}
-.typing span:nth-child(3){animation-delay:.4s}
-@keyframes blink{0%,80%,100%{opacity:.15}40%{opacity:1}}
-.flag-item{padding:8px 10px;border-radius:7px;border:1px solid #fed7aa;background:#fff7ed;margin-bottom:6px}
-.flag-title{font-size:12px;font-weight:500;color:#c2410c;margin-bottom:2px}
-.flag-desc{font-size:11px;color:#666;line-height:1.4}
-.action-row{display:flex;gap:7px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f0f0ee}
-.action-row:last-child{border:none}
-.check{width:13px;height:13px;border-radius:3px;border:1px solid #ccc;flex-shrink:0;margin-top:1px}
-.action-text{font-size:12px;color:#1a1a18;line-height:1.4}
-.action-owner{font-size:10px;color:#888;margin-top:1px}
-.email-box{background:#f8f8f6;border-radius:7px;padding:10px 12px;font-size:11px;line-height:1.7;white-space:pre-wrap}
-.connect-btn{display:block;width:100%;padding:8px;border-radius:7px;border:1px solid #ddd;background:#fff;font-size:13px;text-align:center;cursor:pointer;margin-bottom:6px;transition:border-color .15s}
-.connect-btn:hover{border-color:#3b5bdb;color:#3b5bdb}
-.connect-btn.connected{border-color:#22c55e;background:#f0fdf4;color:#166534;cursor:default}
-.section-divider{height:1px;background:#f0f0ee;margin:4px 0}
-.note-mini{font-size:11px;color:#888;line-height:1.5}
-.must-ask-item{display:flex;gap:6px;align-items:flex-start;margin-bottom:4px}
-.q-dot{width:16px;height:16px;border-radius:50%;background:#fef9c3;border:1px solid #fde68a;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;color:#854d0e;flex-shrink:0;margin-top:2px}
-.reminder-card{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;padding:8px 10px;margin-bottom:6px}
-.reminder-title{font-size:12px;font-weight:500;color:#166534}
-.reminder-time{font-size:11px;color:#888;margin-top:1px}
-.copy-btn{font-size:11px;padding:4px 11px;border-radius:6px;background:#f0f0ee;border:1px solid #ddd;cursor:pointer;margin-top:6px}
-.error{font-size:12px;color:#dc2626;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 9px;margin-top:4px}
 </style>
 </head>
 <body>
 
 <div class="header">
   <div class="header-title">
-    <div class="dot" id="live-dot"></div>
-    Meeting proxy
+    <div class="dot live" id="live-dot"></div>
+    <span>Meeting Proxy</span>
   </div>
-  <span class="badge badge-setup" id="status-badge">Setup</span>
+  <div class="badge badge-setup" id="status-badge">SETUP</div>
 </div>
 
-<div class="tabs" id="main-tabs">
-  <button class="tab active" onclick="showTab('setup')" id="tab-setup">Setup</button>
-  <button class="tab" onclick="showTab('live')" id="tab-live">Live</button>
-  <button class="tab" onclick="showTab('post')" id="tab-post">Summary</button>
-  <button class="tab" onclick="showTab('settings')" id="tab-settings">Me</button>
+<div class="tabs">
+  <button class="tab active" id="tab-selector" onclick="switchTab('selector')">Meetings</button>
+  <button class="tab" id="tab-live" onclick="switchTab('live')">Live Proxy</button>
+  <button class="tab" id="tab-post" onclick="switchTab('post')">Deliverables</button>
 </div>
 
-<!-- SETUP -->
-<div class="screen active" id="screen-setup">
+<div class="screen active" id="screen-selector">
   <div class="body">
-    <div>
-      <div class="label">Your calendar</div>
-      <div id="google-btn" class="connect-btn" onclick="connectGoogle()">Connect Google Calendar</div>
-      <div id="outlook-btn" class="connect-btn" onclick="connectOutlook()">Connect Outlook Calendar</div>
+    <div class="label">Native Sync Detection</div>
+    <div id="matching-status" style="font-size:12px; color:#666; margin-bottom:10px;">
+      Checking active Zoom client meeting context...
     </div>
-    <div class="section-divider"></div>
-    <div>
-      <div class="label" style="margin-bottom:6px">Upcoming meetings</div>
-      <div id="meetings-list"><div class="note-mini">Loading meetings…</div></div>
-      <div id="meetings-error" class="error" style="display:none"></div>
-    </div>
-    <div class="section-divider"></div>
-    <div>
-      <div class="label">Goal for this meeting</div>
-      <textarea id="f-goals" placeholder="e.g. Get a committed delivery date"></textarea>
-    </div>
-    <div>
-      <div class="label">Must-ask questions</div>
-      <input id="f-q1" type="text" placeholder="Q1" style="margin-bottom:5px">
-      <input id="f-q2" type="text" placeholder="Q2 (optional)" style="margin-bottom:5px">
-      <input id="f-q3" type="text" placeholder="Q3 (optional)">
-    </div>
-    <div>
-      <div class="label">Avoid at all costs</div>
-      <input id="f-avoid" type="text" placeholder="e.g. Don't reveal we're behind schedule">
-    </div>
-    <div>
-      <div class="label">Boundaries</div>
-      <div class="row2">
-        <div><div style="font-size:11px;color:#888;margin-bottom:3px">Financial cap</div>
-        <input id="f-financial" type="text" value="$0 — flag all"></div>
-        <div><div style="font-size:11px;color:#888;margin-bottom:3px">Timeline cap</div>
-        <input id="f-timeline" type="text" value="1 week"></div>
-      </div>
-    </div>
-    <div>
-      <div class="label">Autonomy</div>
-      <div class="pill-group">
-        <div class="pill on" id="pill-normal" onclick="setPill('autonomy','normal',this)">Normal</div>
-        <div class="pill" id="pill-flag" onclick="setPill('autonomy','flag',this)">Flag everything</div>
-      </div>
-    </div>
-    <div id="setup-error" class="error" style="display:none"></div>
-    <button class="btn btn-primary" id="start-btn" onclick="startMeeting()" disabled>Start proxy →</button>
+    <div class="label">Available Calendar Schedule</div>
+    <div id="meetings-list"></div>
+    <button class="btn btn-primary" id="btn-start-setup" onclick="submitSetup()" style="margin-top:10px;">Initialize Proxy Configuration</button>
   </div>
 </div>
 
-<!-- LIVE -->
 <div class="screen" id="screen-live">
-  <div class="tabs" style="border-top:1px solid #e8e8e4">
-    <button class="tab active" onclick="showLiveTab('transcript')" id="ltab-transcript">Transcript</button>
-    <button class="tab" onclick="showLiveTab('notes')" id="ltab-notes">Notes</button>
-    <button class="tab" onclick="showLiveTab('context')" id="ltab-context">Context</button>
-  </div>
-
-  <div class="screen active" id="live-transcript">
-    <div class="body" id="transcript-body"></div>
-    <div style="padding:10px 14px;border-top:1px solid #e8e8e4">
-      <div style="display:flex;gap:6px">
-        <input id="speaker-input" type="text" placeholder="Speaker name" style="width:90px;flex-shrink:0">
-        <input id="text-input" type="text" placeholder="What they said…" style="flex:1">
-        <button onclick="sendTranscript()" style="padding:7px 12px;border-radius:7px;background:#3b5bdb;color:#fff;border:none;cursor:pointer;font-size:12px;flex-shrink:0">Send</button>
-      </div>
-      <div class="note-mini" style="margin-top:5px">In production, transcript is fed automatically via Zoom SDK</div>
-    </div>
-  </div>
-
-  <div class="screen" id="live-notes">
-    <div class="body">
-      <div class="label">Flags so far</div>
-      <div id="live-flags-list"><div class="note-mini">None yet</div></div>
-      <div class="label" style="margin-top:6px">Must-ask status</div>
-      <div id="must-ask-status"></div>
-    </div>
-  </div>
-
-  <div class="screen" id="live-context">
-    <div class="body" id="context-body"></div>
-  </div>
-</div>
-
-<!-- POST-MEETING -->
-<div class="screen" id="screen-post">
-  <div class="tabs" style="border-top:1px solid #e8e8e4">
-    <button class="tab active" onclick="showPostTab('actions')" id="ptab-actions">Actions</button>
-    <button class="tab" onclick="showPostTab('flags')" id="ptab-flags">Flagged</button>
-    <button class="tab" onclick="showPostTab('email')" id="ptab-email">Email</button>
-    <button class="tab" onclick="showPostTab('notes')" id="ptab-notes">Notes</button>
-  </div>
-  <div class="screen active" id="post-actions">
-    <div class="body">
-      <div class="label">Action items</div>
-      <div id="post-actions-list"><div class="note-mini">End the meeting to see action items</div></div>
-      <div class="label" style="margin-top:8px">Proposed reminders</div>
-      <div id="post-reminders-list"><div class="note-mini">No reminders proposed</div></div>
-      <button class="btn btn-secondary" onclick="endMeeting()" id="end-btn">End meeting &amp; generate summary</button>
-    </div>
-  </div>
-  <div class="screen" id="post-flags">
-    <div class="body">
-      <div class="label">Needs your decision</div>
-      <div id="post-flags-list"><div class="note-mini">End the meeting to see flagged items</div></div>
-    </div>
-  </div>
-  <div class="screen" id="post-email">
-    <div class="body">
-      <div class="label">Draft follow-up email</div>
-      <div id="post-email-content" class="email-box">End the meeting to generate email draft</div>
-      <button class="copy-btn" onclick="copyEmail()">Copy email</button>
-    </div>
-  </div>
-  <div class="screen" id="post-notes">
-    <div class="body">
-      <div class="label">Full notes</div>
-      <div id="post-notes-content" class="email-box">End the meeting to see notes</div>
-      <button class="copy-btn" onclick="copyNotes()">Copy notes</button>
-    </div>
-  </div>
-</div>
-
-<!-- SETTINGS / PROFILE -->
-<div class="screen" id="screen-settings">
   <div class="body">
-    <div class="label">Your profile (used in every meeting)</div>
-    <div><div style="font-size:11px;color:#888;margin-bottom:3px">Your name</div>
-    <input id="p-name" type="text" placeholder="e.g. Siddharth"></div>
-    <div><div style="font-size:11px;color:#888;margin-bottom:3px">Title</div>
-    <input id="p-title" type="text" placeholder="e.g. Founder"></div>
-    <div><div style="font-size:11px;color:#888;margin-bottom:3px">Company</div>
-    <input id="p-company" type="text" placeholder="e.g. Acme Ltd"></div>
-    <div><div style="font-size:11px;color:#888;margin-bottom:3px">Phrases you use (optional)</div>
-    <input id="p-phrases" type="text" placeholder='e.g. "Let me double-check that"'></div>
-    <button class="btn btn-primary" onclick="saveProfile()">Save profile</button>
-    <div id="profile-saved" style="display:none;font-size:12px;color:#166534;text-align:center;margin-top:4px">Saved ✓</div>
-    <div class="section-divider"></div>
-    <div class="label">Calendar connections</div>
-    <div id="settings-google-btn" class="connect-btn" onclick="connectGoogle()">Connect Google Calendar</div>
-    <div id="settings-outlook-btn" class="connect-btn" onclick="connectOutlook()">Connect Outlook</div>
+    <div class="card">
+      <div class="label">Simulate Transcript Node</div>
+      <input type="text" id="transcript-input" placeholder="Type speaker name and message..." style="margin-bottom:8px;">
+      <button class="btn btn-primary" onclick="sendMockTranscript()">Inject Turn</button>
+    </div>
+    <button class="btn btn-primary" onclick="terminateMeeting()" style="background:#e03131; margin-top:20px;">Complete & End Meeting</button>
+  </div>
+</div>
+
+<div class="screen" id="screen-post">
+  <div class="body">
+    <div class="label">Generated Output Deliverables</div>
+    <textarea id="deliverables-box" style="height:350px;" readonly></textarea>
   </div>
 </div>
 
 <script>
-const API = '';
-let selectedMeeting = null;
-let autonomyMode = 'normal';
-let liveFlags = [];
-let liveMustAsk = [];
-let fullDeliverables = '';
+let currentSelectedEvent = null;
+let currentSource = 'google';
 
-async function api(path, opts={}) {
-  const r = await fetch(API + path, {credentials:'include', ...opts});
-  if (!r.ok) {
-    const e = await r.json().catch(()=>({detail: r.statusText}));
-    const err = new Error(e.detail || r.statusText);
-    err.status = r.status;
-    throw err;
-  }
-  return r.json();
+function switchTab(tabId) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(`tab-${tabId}`).classList.add('active');
+  document.getElementById(`screen-${tabId}`).classList.add('active');
 }
 
-function showTab(name) {
-  ['setup','live','post','settings'].forEach(t => {
-    document.getElementById('screen-'+t).classList.toggle('active', t===name);
-    document.getElementById('tab-'+t).classList.toggle('active', t===name);
+async function selectMeeting(eventId, source) {
+  currentSelectedEvent = eventId;
+  currentSource = source;
+  document.getElementById('matching-status').innerText = `Matched running meeting in calendar list successfully (${source}).`;
+  submitSetup();
+}
+
+async function submitSetup() {
+  if (!currentSelectedEvent) return alert("Select or match a meeting first.");
+  const res = await fetch('/api/meetings/setup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source: currentSource, event_id: currentSelectedEvent })
   });
+  const data = await res.json();
+  if (data.status === 'ready') {
+    document.getElementById('status-badge').className = "badge badge-live";
+    document.getElementById('status-badge').innerText = "LIVE";
+    document.getElementById('live-dot').style.display = 'block';
+    switchTab('live');
+  }
 }
-function showLiveTab(name) {
-  ['transcript','notes','context'].forEach(t => {
-    document.getElementById('live-'+t).classList.toggle('active', t===name);
-    document.getElementById('ltab-'+t).classList.toggle('active', t===name);
+
+async function sendMockTranscript() {
+  const input = document.getElementById('transcript-input').value;
+  await fetch('/api/meetings/transcript', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ speaker: "User", text: input })
   });
-}
-function showPostTab(name) {
-  ['actions','flags','email','notes'].forEach(t => {
-    document.getElementById('post-'+t).classList.toggle('active', t===name);
-    document.getElementById('ptab-'+t).classList.toggle('active', t===name);
-  });
-}
-function setPill(group, val, el) {
-  document.querySelectorAll(`[id^="pill-"]`).forEach(p => p.classList.remove('on'));
-  el.classList.add('on');
-  if (group === 'autonomy') autonomyMode = val;
+  document.getElementById('transcript-input').value = '';
 }
 
-async function loadMe() {
-  try {
-    const me = await api('/api/me');
-    updateCalendarButtons(me.google_connected, me.outlook_connected);
-    if (me.profile) {
-      document.getElementById('p-name').value = me.profile.name || '';
-      document.getElementById('p-title').value = me.profile.title || '';
-      document.getElementById('p-company').value = me.profile.company || '';
-      document.getElementById('p-phrases').value = me.profile.phrases || '';
-    }
-  } catch(e) {
-    // If not authenticated (401), redirect to Zoom login within this context
-    if (e.status === 401) {
-      window.location.href = '/auth/zoom/login';
-    } else {
-      console.error('Failed to load user data:', e.message);
-    }
-  }
+async function terminateMeeting() {
+  const res = await fetch('/api/meetings/end', { method: 'POST' });
+  const data = await res.json();
+  document.getElementById('deliverables-box').value = data.deliverables;
+  document.getElementById('status-badge').className = "badge badge-done";
+  document.getElementById('status-badge').innerText = "DONE";
+  document.getElementById('live-dot').style.display = 'none';
+  switchTab('post');
 }
-
-function updateCalendarButtons(google, outlook) {
-  ['google-btn','settings-google-btn'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) { el.textContent = google ? '✓ Google Calendar connected' : 'Connect Google Calendar';
-      el.className = 'connect-btn' + (google ? ' connected' : ''); }
-  });
-  ['outlook-btn','settings-outlook-btn'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) { el.textContent = outlook ? '✓ Outlook connected' : 'Connect Outlook Calendar';
-      el.className = 'connect-btn' + (outlook ? ' connected' : ''); }
-  });
-}
-
-function connectGoogle() { openConnectModal('/auth/google/login?write=true', 'Google Calendar'); }
-function connectOutlook() { openConnectModal('/auth/outlook/login', 'Outlook Calendar'); }
-
-async function openConnectModal(path, name) {
-  // Mint a connect token now, while this fetch is still happening inside
-  // Zoom's webview (mp_session cookie present). The link we're about to
-  // open externally won't have that cookie, so we carry this token instead.
-  let fullPath = path;
-  try {
-    const tok = await api('/api/connect-token');
-    fullPath += (path.includes('?') ? '&' : '?') + 'connect_token=' + encodeURIComponent(tok.connect_token);
-  } catch (e) {
-    alert("Couldn't start the connection (" + e.message + "). Try reloading the app inside Zoom.");
-    return;
-  }
-  showConnectModal(fullPath, name);
-}
-
-function showConnectModal(path, name) {
-  const url = window.location.origin + path;
-  const existing = document.getElementById('connect-modal');
-  if (existing) existing.remove();
-  const modal = document.createElement('div');
-  modal.id = 'connect-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
-  modal.innerHTML = `
-    <div style="background:#fff;border-radius:12px;padding:24px;max-width:320px;width:100%;font-family:-apple-system,sans-serif">
-      <div style="font-size:15px;font-weight:500;color:#1a1a18;margin-bottom:8px">Connect ${name}</div>
-      <div style="font-size:13px;color:#666;margin-bottom:16px;line-height:1.5">
-        Click the button below to open Google sign-in. After connecting, return to this app.
-      </div>
-      <a href="${url}" target="_blank" rel="noopener noreferrer" style="display:block;background:#3b5bdb;color:#fff;border-radius:8px;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:500;margin-bottom:10px">
-        Open ${name} sign-in
-      </a>
-      <button onclick="document.getElementById('connect-modal').remove();loadMe();loadMeetings();" 
-        style="width:100%;padding:8px;border-radius:8px;border:1px solid #ddd;background:#f5f5f3;font-size:13px;cursor:pointer;color:#333">
-        I've connected — refresh
-      </button>
-      <button onclick="document.getElementById('connect-modal').remove()" 
-        style="width:100%;padding:6px;border-radius:8px;border:none;background:none;font-size:12px;cursor:pointer;color:#888;margin-top:4px">
-        Cancel
-      </button>
-    </div>`;
-  document.body.appendChild(modal);
-}
-
-async function loadMeetings() {
-  const list = document.getElementById('meetings-list');
-  const err = document.getElementById('meetings-error');
-  list.innerHTML = '<div class="note-mini">Loading…</div>';
-  err.style.display = 'none';
-  try {
-    const data = await api('/api/meetings/upcoming?hours=72');
-    const meetings = data.meetings || [];
-    if (!meetings.length) { list.innerHTML = '<div class="note-mini">No meetings in the next 3 days</div>'; return; }
-    list.innerHTML = '';
-    meetings.forEach(m => {
-      const start = new Date(m.start);
-      const dateStr = start.toLocaleDateString('en-GB', {weekday:'short',day:'numeric',month:'short'});
-      const timeStr = start.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
-      const div = document.createElement('div');
-      div.className = 'meeting-item';
-      div.innerHTML = `<div class="meeting-title">${esc(m.title)}</div>
-        <div class="meeting-meta">${dateStr} · ${timeStr} · ${m.attendees.length} attendee${m.attendees.length!==1?'s':''}</div>
-        <span class="mb ${m.agenda_missing?'mb-warn':'mb-ok'}">${m.agenda_missing?'No agenda':'Has agenda'}</span>`;
-      div.addEventListener('click', () => {
-        document.querySelectorAll('.meeting-item').forEach(i=>i.classList.remove('sel'));
-        div.classList.add('sel');
-        selectedMeeting = m;
-        document.getElementById('start-btn').disabled = false;
-        buildContextPanel(m);
-        buildMustAskStatus();
-      });
-      list.appendChild(div);
-    });
-    if (data.errors && Object.keys(data.errors).length) {
-      err.textContent = 'Some calendars had errors: ' + Object.values(data.errors).join(' | ');
-      err.style.display = 'block';
-    }
-  } catch(e) {
-    list.innerHTML = '';
-    err.textContent = e.message;
-    err.style.display = 'block';
-  }
-}
-
-function buildContextPanel(m) {
-  const body = document.getElementById('context-body');
-  const ats = (m.attendees||[]).map(a=>`<div style="font-size:12px;padding:2px 0">${esc(a.name||a.email)} <span style="color:#888;font-size:11px">${a.name?'&lt;'+esc(a.email)+'&gt;':''}</span></div>`).join('') || '<div class="note-mini">None listed</div>';
-  body.innerHTML = `
-    <div class="label">Meeting</div><div style="font-size:13px;font-weight:500;margin-bottom:8px">${esc(m.title)}</div>
-    <div class="label">Date / time</div><div class="note-mini" style="margin-bottom:8px">${new Date(m.start).toLocaleString('en-GB')}</div>
-    <div class="label">Attendees</div><div style="margin-bottom:8px">${ats}</div>
-    <div class="label">Agenda</div><div class="note-mini">${m.agenda_missing?'<span style="color:#b45309">No agenda in invite — agent will flag</span>':esc(m.agenda_extracted||'')}</div>`;
-}
-
-function buildMustAskStatus() {
-  liveMustAsk = [
-    document.getElementById('f-q1').value,
-    document.getElementById('f-q2').value,
-    document.getElementById('f-q3').value,
-  ].filter(q=>q.trim());
-  const el = document.getElementById('must-ask-status');
-  el.innerHTML = liveMustAsk.map((q,i)=>`<div class="must-ask-item"><div class="q-dot">${i+1}</div><div style="font-size:12px">${esc(q)}</div></div>`).join('') || '<div class="note-mini">No must-ask questions set</div>';
-}
-
-async function startMeeting() {
-  if (!selectedMeeting) return;
-  const btn = document.getElementById('start-btn');
-  btn.disabled = true; btn.textContent = 'Starting…';
-  try {
-    const must_ask = [
-      document.getElementById('f-q1').value,
-      document.getElementById('f-q2').value,
-      document.getElementById('f-q3').value,
-    ].filter(q=>q.trim());
-    await api('/api/meetings/start', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        source: selectedMeeting.source,
-        event_id: selectedMeeting.event_id,
-        goals: document.getElementById('f-goals').value,
-        avoid: document.getElementById('f-avoid').value,
-        must_ask,
-        financial_cap: document.getElementById('f-financial').value,
-        timeline_cap: document.getElementById('f-timeline').value,
-        flag_everything: autonomyMode === 'flag',
-      }),
-    });
-    document.getElementById('live-dot').classList.add('live');
-    document.getElementById('status-badge').textContent = 'Live';
-    document.getElementById('status-badge').className = 'badge badge-live';
-    document.getElementById('transcript-body').innerHTML = '';
-    liveFlags = [];
-    buildMustAskStatus();
-    showTab('live');
-  } catch(e) {
-    document.getElementById('setup-error').textContent = e.message;
-    document.getElementById('setup-error').style.display = 'block';
-    btn.disabled = false; btn.textContent = 'Start proxy →';
-  }
-}
-
-async function sendTranscript() {
-  const speaker = document.getElementById('speaker-input').value.trim() || 'Participant';
-  const text = document.getElementById('text-input').value.trim();
-  if (!text) return;
-  document.getElementById('text-input').value = '';
-
-  const body = document.getElementById('transcript-body');
-  const row = document.createElement('div');
-  row.className = 'transcript-row';
-  row.innerHTML = `<div class="sp-name">${esc(speaker)}</div><div class="sp-text">${esc(text)}</div>`;
-  body.appendChild(row);
-
-  const typing = document.createElement('div');
-  typing.className = 'typing';
-  typing.innerHTML = '<span></span><span></span><span></span>';
-  body.appendChild(typing);
-  body.scrollTop = body.scrollHeight;
-
-  try {
-    const resp = await api(`/api/meetings/transcript?speaker=${encodeURIComponent(speaker)}&text=${encodeURIComponent(text)}`, {method:'POST'});
-    body.removeChild(typing);
-    if (!resp.silent && resp.reply) {
-      const isFlag = resp.reply.toLowerCase().includes("let me confirm") || resp.reply.toLowerCase().includes("flag");
-      const block = document.createElement('div');
-      block.className = 'agent-block';
-      block.innerHTML = `<div class="agent-label">Proxy response${isFlag?'<span class="flag-note">· flagging</span>':''}</div>
-        <div class="agent-bubble">${esc(resp.reply)}</div>
-        <div class="approve-btns">
-          <button class="btn-send" onclick="markSent(this,'${esc(resp.reply).replace(/'/g,"\\'")}')">Send to chat</button>
-          <button class="btn-edit">Edit first</button>
-        </div>`;
-      body.appendChild(block);
-      if (isFlag) {
-        liveFlags.push({text: resp.reply, speaker});
-        updateLiveFlags();
-      }
-    }
-  } catch(e) {
-    body.removeChild(typing);
-    const err = document.createElement('div');
-    err.className = 'error';
-    err.textContent = 'Agent error: ' + e.message;
-    body.appendChild(err);
-  }
-  body.scrollTop = body.scrollHeight;
-}
-
-function markSent(btn, text) {
-  btn.textContent = 'Sent ✓'; btn.style.background = '#16a34a';
-  setTimeout(()=>{btn.textContent='Send to chat';btn.style.background='';},2000);
-}
-
-function updateLiveFlags() {
-  const el = document.getElementById('live-flags-list');
-  if (!liveFlags.length) { el.innerHTML = '<div class="note-mini">None yet</div>'; return; }
-  el.innerHTML = liveFlags.map(f=>`<div class="flag-item"><div class="flag-desc">${esc(f.text)}</div></div>`).join('');
-}
-
-async function endMeeting() {
-  const btn = document.getElementById('end-btn');
-  btn.disabled = true; btn.textContent = 'Generating summary…';
-  try {
-    const resp = await api('/api/meetings/end', {method:'POST'});
-    fullDeliverables = resp.deliverables || '';
-    parseDeliverables(fullDeliverables);
-    document.getElementById('live-dot').classList.remove('live');
-    document.getElementById('status-badge').textContent = 'Done';
-    document.getElementById('status-badge').className = 'badge badge-done';
-    showTab('post');
-  } catch(e) {
-    btn.disabled = false; btn.textContent = 'End meeting & generate summary';
-    alert('Error: ' + e.message);
-  }
-}
-
-function parseDeliverables(text) {
-  document.getElementById('post-notes-content').textContent = text;
-
-  const emailMatch = text.match(/(?:draft follow.up email|3\.|email draft)([\s\S]*?)(?=\n#{1,3} |\n\d\. |REMINDER:|$)/i);
-  document.getElementById('post-email-content').textContent = emailMatch ? emailMatch[1].trim() : 'See full notes for email draft';
-
-  const reminders = [];
-  const reminderRe = /REMINDER:\s*title="([^"]+)"\s*start="([^"]+)"\s*end="([^"]+)"/g;
-  let m;
-  while ((m = reminderRe.exec(text)) !== null) reminders.push({title:m[1],start:m[2],end:m[3]});
-
-  const remEl = document.getElementById('post-reminders-list');
-  if (reminders.length) {
-    remEl.innerHTML = reminders.map((r,i)=>`
-      <div class="reminder-card">
-        <div class="reminder-title">${esc(r.title)}</div>
-        <div class="reminder-time">${new Date(r.start).toLocaleString('en-GB')}</div>
-        <button onclick="addReminder(${i})" style="margin-top:5px;font-size:11px;padding:3px 10px;border-radius:6px;background:#3b5bdb;color:#fff;border:none;cursor:pointer">Add to calendar</button>
-      </div>`).join('');
-    window._reminders = reminders;
-  } else {
-    remEl.innerHTML = '<div class="note-mini">No reminders proposed</div>';
-  }
-
-  const actionsEl = document.getElementById('post-actions-list');
-  const actMatch = text.match(/action items([\s\S]*?)(?=\n#{1,3} |\n\d\. |$)/i);
-  actionsEl.innerHTML = actMatch
-    ? actMatch[1].trim().split('\n').filter(l=>l.trim()).map(l=>`
-        <div class="action-row"><div class="check"></div>
-        <div><div class="action-text">${esc(l.replace(/^[-*\[\] ]+/,''))}</div></div></div>`).join('')
-    : '<div class="note-mini">See full notes</div>';
-
-  const flagsEl = document.getElementById('post-flags-list');
-  const flagMatch = text.match(/flagged(?:\s+items)?([\s\S]*?)(?=\n#{1,3} |\n\d\. |REMINDER:|$)/i);
-  flagsEl.innerHTML = flagMatch
-    ? flagMatch[1].trim().split('\n').filter(l=>l.trim()).map(l=>`
-        <div class="flag-item"><div class="flag-desc">${esc(l.replace(/^[-*\[\] ]+/,''))}</div></div>`).join('')
-    : '<div class="note-mini">No flagged items</div>';
-}
-
-async function addReminder(idx) {
-  const r = window._reminders[idx];
-  if (!selectedMeeting) return;
-  try {
-    const tokenResp = await api(`/api/meetings/${selectedMeeting.source}/${selectedMeeting.event_id}/add-reminder/request-token?title=${encodeURIComponent(r.title)}&start=${encodeURIComponent(r.start)}&end=${encodeURIComponent(r.end)}`, {method:'POST'});
-    await api(`/api/meetings/${selectedMeeting.source}/${selectedMeeting.event_id}/add-reminder`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({title:r.title,start:r.start,end:r.end,confirmation_token:tokenResp.confirmation_token}),
-    });
-    const btns = document.querySelectorAll('#post-reminders-list button');
-    if (btns[idx]) { btns[idx].textContent = 'Added ✓'; btns[idx].style.background='#16a34a'; btns[idx].disabled=true; }
-  } catch(e) { alert('Could not add reminder: ' + e.message); }
-}
-
-async function saveProfile() {
-  try {
-    await api('/api/me/profile', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        name: document.getElementById('p-name').value,
-        title: document.getElementById('p-title').value,
-        company: document.getElementById('p-company').value,
-        phrases: document.getElementById('p-phrases').value,
-      }),
-    });
-    document.getElementById('profile-saved').style.display = 'block';
-    setTimeout(()=>document.getElementById('profile-saved').style.display='none', 2000);
-  } catch(e) { alert('Save failed: ' + e.message); }
-}
-
-function copyEmail() {
-  navigator.clipboard.writeText(document.getElementById('post-email-content').textContent);
-  const btn = event.target; btn.textContent='Copied!'; setTimeout(()=>btn.textContent='Copy email',1500);
-}
-function copyNotes() {
-  navigator.clipboard.writeText(document.getElementById('post-notes-content').textContent);
-  const btn = event.target; btn.textContent='Copied!'; setTimeout(()=>btn.textContent='Copy notes',1500);
-}
-
-function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-document.getElementById('text-input').addEventListener('keydown', e => { if(e.key==='Enter') sendTranscript(); });
 
 window.addEventListener('load', async () => {
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('connected')) {
-    const which = params.get('connected');
-    const msg = which === 'google' ? 'Google Calendar connected!' : 'Outlook connected!';
-    const banner = document.createElement('div');
-    banner.style.cssText = 'background:#f0fdf4;border:1px solid #22c55e;color:#166534;padding:8px 14px;font-size:13px;text-align:center;position:fixed;top:0;left:0;right:0;z-index:999';
-    banner.textContent = '✓ ' + msg;
-    document.body.prepend(banner);
-    setTimeout(() => banner.remove(), 3000);
-    window.history.replaceState({}, '', '/app');
+  try {
+    if (typeof zoomSdk !== 'undefined') {
+      await zoomSdk.config({ capabilities: ['getMeetingContext'] });
+      const context = await zoomSdk.getMeetingContext();
+      
+      if (context && (context.meetingId || context.meetingUUID)) {
+        const matchRes = await fetch('/api/meetings/active-match', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ meetingId: context.meetingId, meetingUUID: context.meetingUUID })
+        });
+        const result = await matchRes.json();
+        if (result.matched) {
+          selectMeeting(result.event_id, result.source);
+          return;
+        }
+        document.getElementById('matching-status').innerText = "Active Zoom context found but no matching calendar event found.";
+      }
+    }
+  } catch (err) {
+    console.error("Zoom SDK match failed:", err);
+    document.getElementById('matching-status').innerText = "Failed to fetch Zoom app context natively. Falling back.";
   }
-  await loadMe();
-  await loadMeetings();
 });
 </script>
 </body>

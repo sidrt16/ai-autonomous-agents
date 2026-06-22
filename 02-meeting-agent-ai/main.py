@@ -33,7 +33,6 @@ from zoom_auth import (
     make_connect_token, read_connect_token, CONNECT_TOKEN_MAX_AGE,
 )
 from storage import JSONStore
-from calendar_write import request_confirmation_token, ConfirmationError, WriteNotAuthorized
 
 app = FastAPI(title="Meeting Proxy")
 
@@ -67,9 +66,9 @@ app.add_middleware(SecurityHeadersMiddleware)
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Runtime in-memory registry for active meeting sessions
-_sessions = {}  # state -> zoom_user_id (in-memory CSRF store)
-_meeting_sessions = {}  # meeting_id/zoom_user_id -> runtime data state
+# Runtime stores
+_sessions = {}  # state -> zoom_user_id (CSRF)
+_meeting_sessions = {}  # meeting_id -> runtime conversation session state
 
 class ActiveProxySetupRequest(BaseModel):
     meeting_id: str
@@ -130,7 +129,7 @@ def _get_user_id_for_oauth_start(mp_session: Optional[str], connect_token: Optio
     return "default_zoom_user"
 
 # ---------------------------------------------------------------------------
-# Core Context Promotion Architecture (Fixed & Safe)
+# Core Context Promotion Architecture (Fixed Positional Signature Mapping)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/proxy/active-promote")
@@ -138,45 +137,28 @@ def promote_active_proxy(req: ActiveProxySetupRequest, mp_session: Optional[str]
     user_id = _get_user_id(mp_session)
     profile = get_user_profile(user_id) or {}
     
-    # Pack meeting properties matching standard object expectations
     mock_meeting_schema = {
         "title": req.title,
         "event_id": req.meeting_id,
         "agenda_missing": not bool(req.goals)
     }
     
-    # Pack setup variables including runtime UI fields and fallback profile properties
-    # to maintain compatibility with whatever keys prompt_builder relies on.
-    setup_dict = {
-        "standing_goals": req.goals or "",
-        "relationship_context": f"Active Zoom Proxy. Avoidance Guardrail: {req.avoid or 'None'}",
-        "boundary_financial_cap": req.financial_cap,
-        "boundary_timeline_cap": req.timeline_cap,
-        "off_limits_topics": req.off_limits,
-        "formality": req.formality,
-        "directness": req.directness,
-        # Flattened profile bindings to prevent missing key errors inside the templates
-        "name": profile.get("name", "User"),
-        "title_role": profile.get("title", "Executive"),
-        "company": profile.get("company", ""),
-        "style": profile.get("style", "professional"),
-        "phrases": profile.get("phrases", "")
-    }
-    
     try:
-        # Eliminate 'profile=profile' entirely to avoid signature mismatches.
-        # Support positional unpacking fallbacks natively if required by the environment.
-        try:
-            system_prompt = prompt_builder.build_system_prompt(
-                meeting=mock_meeting_schema,
-                setup=setup_dict
-            )
-        except TypeError:
-            system_prompt = prompt_builder.build_system_prompt(
-                mock_meeting_schema, 
-                setup_dict
-            )
-            
+        # Pass all 12 parameters strictly positionally to bypass positional-only character restrictions
+        system_prompt = prompt_builder.build_system_prompt(
+            mock_meeting_schema,                     # meeting
+            profile.get("title") or "",              # owner_title
+            profile.get("company") or "",            # owner_company
+            profile.get("style") or "professional",  # owner_style
+            req.goals or "",                         # goals
+            req.avoid or "",                         # avoid
+            [],                                      # must_ask (passed as empty list)
+            req.financial_cap or "$0 — flag all",    # financial_cap
+            req.timeline_cap or "1 week",            # timeline_cap
+            req.off_limits or "",                    # off_limits
+            req.formality or "professional",         # formality
+            req.directness or "balanced"             # directness
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prompt Compilation Failure: {str(e)}")
     

@@ -33,6 +33,7 @@ from zoom_auth import (
     make_connect_token, read_connect_token, CONNECT_TOKEN_MAX_AGE,
 )
 from storage import JSONStore
+from calendar_write import request_confirmation_token, ConfirmationError, WriteNotAuthorized
 
 app = FastAPI(title="Meeting Proxy")
 
@@ -69,6 +70,7 @@ if os.path.exists("static"):
 # Runtime stores
 _sessions = {}  # state -> zoom_user_id (CSRF)
 _meeting_sessions = {}  # meeting_id -> runtime conversation session state
+_confirmation_store = JSONStore(settings.CONFIRMATION_STORE_PATH)
 
 class ActiveProxySetupRequest(BaseModel):
     meeting_id: str
@@ -129,7 +131,7 @@ def _get_user_id_for_oauth_start(mp_session: Optional[str], connect_token: Optio
     return "default_zoom_user"
 
 # ---------------------------------------------------------------------------
-# Core Context Promotion Architecture (Explicit Keyword Mapping)
+# Core Context Promotion Architecture
 # ---------------------------------------------------------------------------
 
 @app.post("/api/proxy/active-promote")
@@ -137,22 +139,15 @@ def promote_active_proxy(req: ActiveProxySetupRequest, mp_session: Optional[str]
     user_id = _get_user_id(mp_session)
     profile = get_user_profile(user_id) or {}
     
-    mock_meeting_schema = {
-        "title": req.title,
-        "event_id": req.meeting_id,
-        "agenda_missing": not bool(req.goals)
-    }
-    
     try:
-        # Pass all 12 parameters explicitly via named keywords to bind them perfectly
+        # Pass exactly the 11 keywords defined in the compiler signature.
         system_prompt = prompt_builder.build_system_prompt(
-            meeting=mock_meeting_schema,
             owner_title=profile.get("title") or "",
             owner_company=profile.get("company") or "",
             owner_style=profile.get("style") or "professional",
             goals=req.goals or "",
             avoid=req.avoid or "",
-            must_ask=[],  # Safe empty list placeholder for the expected internal iterable
+            must_ask=[],  # Satisfies the required internal iterable argument safely
             financial_cap=req.financial_cap or "$0 — flag all",
             timeline_cap=req.timeline_cap or "1 week",
             off_limits=req.off_limits or "",

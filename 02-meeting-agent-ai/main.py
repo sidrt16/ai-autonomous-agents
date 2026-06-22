@@ -129,7 +129,7 @@ def _get_user_id_for_oauth_start(mp_session: Optional[str], connect_token: Optio
     return "default_zoom_user"
 
 # ---------------------------------------------------------------------------
-# Core Context Promotion Architecture (Fixed Positional Signature Mapping)
+# Core Context Promotion Architecture (Explicit Keyword Mapping)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/proxy/active-promote")
@@ -144,20 +144,20 @@ def promote_active_proxy(req: ActiveProxySetupRequest, mp_session: Optional[str]
     }
     
     try:
-        # Pass all 12 parameters strictly positionally to bypass positional-only character restrictions
+        # Pass all 12 parameters explicitly via named keywords to bind them perfectly
         system_prompt = prompt_builder.build_system_prompt(
-            mock_meeting_schema,                     # meeting
-            profile.get("title") or "",              # owner_title
-            profile.get("company") or "",            # owner_company
-            profile.get("style") or "professional",  # owner_style
-            req.goals or "",                         # goals
-            req.avoid or "",                         # avoid
-            [],                                      # must_ask (passed as empty list)
-            req.financial_cap or "$0 — flag all",    # financial_cap
-            req.timeline_cap or "1 week",            # timeline_cap
-            req.off_limits or "",                    # off_limits
-            req.formality or "professional",         # formality
-            req.directness or "balanced"             # directness
+            meeting=mock_meeting_schema,
+            owner_title=profile.get("title") or "",
+            owner_company=profile.get("company") or "",
+            owner_style=profile.get("style") or "professional",
+            goals=req.goals or "",
+            avoid=req.avoid or "",
+            must_ask=[],  # Safe empty list placeholder for the expected internal iterable
+            financial_cap=req.financial_cap or "$0 — flag all",
+            timeline_cap=req.timeline_cap or "1 week",
+            off_limits=req.off_limits or "",
+            formality=req.formality or "professional",
+            directness=req.directness or "balanced"
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prompt Compilation Failure: {str(e)}")

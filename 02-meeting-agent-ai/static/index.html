@@ -16,9 +16,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-siz
 .badge{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500}
 .badge-setup{background:#eff6ff;color:#1d4ed8}
 .badge-live{background:#f0fdf4;color:#166534}
-.badge-done{background:#fefce8;color:#854d0e}
 .tabs{display:flex;border-bottom:1px solid #e8e8e4;flex-shrink:0}
-.tab{flex:1;padding:8px 0;font-size:12px;font-weight:500;text-align:center;cursor:pointer;color:#888;border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none}
+.tab{flex:1;padding:8px 0;font-size:12px;font-weight:500;text-align:center;cursor:pointer;color:#888;border-bottom:2px solid transparent;background:none;border:none}
 .tab.active{color:#1a1a18;border-bottom-color:#3b5bdb}
 .screen{display:none;flex:1;overflow-y:auto;flex-direction:column}
 .screen.active{display:flex}
@@ -33,7 +32,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-siz
 input,textarea,select{width:100%;padding:7px 9px;border:1px solid #ddd;border-radius:7px;font-size:13px;font-family:inherit;background:#fff}
 .btn{width:100%;padding:9px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none}
 .btn-primary{background:#3b5bdb;color:#fff}
-.btn-primary:hover{background:#2f4cc0}
+.btn-auth{background:#f59e0b;color:#fff;text-align:center;text-decoration:none;display:block;padding:9px;border-radius:8px;font-size:13px;font-weight:500;margin-top:5px;}
 </style>
 </head>
 <body>
@@ -55,8 +54,8 @@ input,textarea,select{width:100%;padding:7px 9px;border:1px solid #ddd;border-ra
 <div class="screen active" id="screen-selector">
   <div class="body">
     <div class="label">Native Sync Detection</div>
-    <div id="matching-status" style="font-size:12px; color:#c92a2a; margin-bottom:10px; font-weight: 500;">
-      Checking sync state...
+    <div id="matching-status" style="font-size:12px; color:#888; margin-bottom:10px; font-weight: 500;">
+      Checking context synchronization...
     </div>
     
     <div style="display: flex; gap: 8px; margin-bottom: 10px;">
@@ -69,6 +68,7 @@ input,textarea,select{width:100%;padding:7px 9px;border:1px solid #ddd;border-ra
 
     <div class="label">Available Calendar Schedule</div>
     <div id="meetings-list" style="max-height: 280px; overflow-y: auto;"></div>
+    <div id="auth-container"></div>
     <button class="btn btn-primary" id="btn-start-setup" onclick="submitSetup()" style="margin-top:10px;">Initialize Proxy Configuration</button>
   </div>
 </div>
@@ -114,7 +114,19 @@ async function loadFallbackList() {
   currentSource = src;
   const res = await fetch(`/api/meetings?source=${src}`);
   const data = await res.json();
-  renderMeetingsList(data.meetings || [], src);
+  
+  if (data.connected === false) {
+    document.getElementById('auth-container').innerHTML = `
+      <div class="card" style="text-align: center; margin-bottom: 10px;">
+        <p style="font-size: 12px; margin-bottom:8px; color:#555;">Calendar token not found for your session.</p>
+        <a href="/auth/${src}/login" target="_blank" class="btn-auth">Connect ${src === 'google' ? 'Google' : 'Outlook'} Calendar</a>
+      </div>
+    `;
+    renderMeetingsList([], src);
+  } else {
+    document.getElementById('auth-container').innerHTML = '';
+    renderMeetingsList(data.meetings || [], src);
+  }
 }
 
 function renderMeetingsList(meetings, source) {
@@ -126,13 +138,13 @@ function renderMeetingsList(meetings, source) {
   container.innerHTML = meetings.map(m => `
     <div class="meeting-item" onclick="selectMeetingItem(this, '${m.event_id}', '${source}')">
       <div class="meeting-title">${esc(m.title)}</div>
-      <div class="meeting-meta">${new Date(m.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} | ID: ${m.event_id.substring(0,8)}...</div>
+      <div class="meeting-meta">${m.start.split('T')[1]?.substring(0,5) || ''} | Event ID: ${m.event_id.substring(0,8)}...</div>
     </div>
   `).join('');
 }
 
 async function submitSetup() {
-  if (!currentSelectedEvent) return alert("Please click to select an event from the calendar list first.");
+  if (!currentSelectedEvent) return alert("Please select a meeting from the calendar schedule first.");
   const res = await fetch('/api/meetings/setup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -161,44 +173,14 @@ async function terminateMeeting() {
   const res = await fetch('/api/meetings/end', { method: 'POST' });
   const data = await res.json();
   document.getElementById('deliverables-box').value = data.deliverables;
-  document.getElementById('status-badge').className = "badge badge-done";
-  document.getElementById('status-badge').innerText = "DONE";
-  document.getElementById('live-dot').style.display = 'none';
   switchTab('post');
 }
 
 function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 window.addEventListener('load', async () => {
-  try {
-    if (typeof zoomSdk !== 'undefined') {
-      await zoomSdk.config({ capabilities: ['getMeetingContext'] });
-      const context = await zoomSdk.getMeetingContext();
-      
-      if (context && (context.meetingId || context.meetingUUID)) {
-        const matchRes = await fetch('/api/meetings/active-match', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ meetingId: context.meetingId, meetingUUID: context.meetingUUID })
-        })
-        const result = await matchRes.json();
-        if (result.matched) {
-          document.getElementById('matching-status').style.color = "#22c55e";
-          document.getElementById('matching-status').innerText = `Matched meeting context automatically (${result.source}).`;
-          currentSelectedEvent = result.event_id;
-          currentSource = result.source;
-          submitSetup();
-          return;
-        }
-      }
-    }
-    throw new Error("No active SDK match context available");
-  } catch (err) {
-    console.log("SDK context fallback triggered:", err);
-    document.getElementById('matching-status').style.color = "#888";
-    document.getElementById('matching-status').innerText = "Running outside active matching pipeline. Manual selection active.";
-    loadFallbackList();
-  }
+  document.getElementById('matching-status').innerText = "Running outside active meeting context. Manual selection mode active.";
+  loadFallbackList();
 });
 </script>
 </body>

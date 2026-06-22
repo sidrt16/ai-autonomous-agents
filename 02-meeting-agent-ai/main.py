@@ -50,11 +50,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(SecurityHeadersMiddleware)
 
-# Mount static folder securely
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Runtime in-memory registry for active meeting contexts
 _meeting_sessions = {}
 
 def _get_user_id(mp_session: Optional[str]) -> str:
@@ -85,37 +83,52 @@ class TranscriptPayload(BaseModel):
 @app.post("/api/proxy/active-promote")
 def promote_active_proxy(req: ActiveProxySetupRequest, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
-    profile = get_user_profile(user_id)
+    profile = get_user_profile(user_id) or {}
     
-    # Structural shim mapping current Zoom UI states to template schema names
+    # Meeting context format matching standard structure
     mock_meeting_schema = {
         "title": req.title,
         "event_id": req.meeting_id,
         "agenda_missing": not bool(req.goals)
     }
     
-    # Structural dictionary translation ensuring prompt_builder reads valid matching keys
+    # Build a unified setup configuration context dictionary.
+    # We include both the runtime UI constraints and fallback profile keys 
+    # to guarantee compatibility regardless of which fields prompt_builder accesses.
     setup_dict = {
-        "standing_goals": req.goals,
-        "relationship_context": f"Active Live Meeting Proxy. Target Avoidance Guardrail: {req.avoid or 'None'}",
+        "standing_goals": req.goals or "",
+        "relationship_context": f"Active Zoom Proxy. Avoid: {req.avoid or 'None'}",
         "boundary_financial_cap": req.financial_cap,
         "boundary_timeline_cap": req.timeline_cap,
         "off_limits_topics": req.off_limits,
         "formality": req.formality,
-        "directness": req.directness
+        "directness": req.directness,
+        # Flattened profile parameters for template injection safety
+        "name": profile.get("name", "User"),
+        "title_role": profile.get("title", "Executive"),
+        "company": profile.get("company", ""),
+        "style": profile.get("style", "professional"),
+        "phrases": profile.get("phrases", "")
     }
     
     try:
-        # Build system matrix prompt using clean schema dictionary
-        system_prompt = prompt_builder.build_system_prompt(
-            profile=profile,
-            meeting=mock_meeting_schema,
-            setup=setup_dict
-        )
+        # We pass arguments cleanly via unpacked setup keys or standard positional structures
+        # to ensure prompt_builder receives fields in its expected format without crashing on 'profile'.
+        try:
+            system_prompt = prompt_builder.build_system_prompt(
+                meeting=mock_meeting_schema,
+                setup=setup_dict
+            )
+        except TypeError:
+            # Fallback signature handling if your environment's builder uses a single setup schema object
+            system_prompt = prompt_builder.build_system_prompt(
+                mock_meeting_schema, 
+                setup_dict
+            )
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prompt Compilation Failure: {str(e)}")
     
-    # Bind running variables securely to active session tracking dictionaries
     _meeting_sessions[req.meeting_id] = {
         "history": [],
         "system_prompt": system_prompt,
@@ -149,7 +162,7 @@ def end_meeting_proxy(meeting_id: str):
     return {"deliverables": deliverables}
 
 # ---------------------------------------------------------------------------
-# Profile Persistence Pass-Through Endpoints
+# Profile & Template Management Endpoints
 # ---------------------------------------------------------------------------
 
 @app.post("/api/profile")

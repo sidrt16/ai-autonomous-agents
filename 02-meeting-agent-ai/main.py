@@ -2,13 +2,15 @@
 Main FastAPI app — multi-user, Zoom App backend.
 All endpoints are per-user, keyed by Zoom session cookie.
 """
+import os
 import secrets
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Cookie, Response, Request
 from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
- 
+from starlette.middleware.base import BaseHTTPMiddleware
+
 import google_client, outlook_client, agent, prompt_builder
 from config import settings
 from schemas import (
@@ -28,14 +30,13 @@ from zoom_auth import (
 )
 from storage import JSONStore
 from calendar_write import request_confirmation_token, ConfirmationError, WriteNotAuthorized
- 
-import os
+
 _sessions = {}  # state -> zoom_user_id (in-memory CSRF store)
 _meeting_sessions = {}  # zoom_user_id -> {history, system_prompt, event_id, source}
 _confirmation_store = JSONStore(settings.CONFIRMATION_STORE_PATH)
- 
+
 app = FastAPI(title="Meeting Proxy")
- 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -43,9 +44,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
- 
-from starlette.middleware.base import BaseHTTPMiddleware
- 
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -53,472 +52,154 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline' https://appssdk.zoom.us; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
             "connect-src 'self' https://appssdk.zoom.us"
         )
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return response
- 
+
 app.add_middleware(SecurityHeadersMiddleware)
- 
 app.mount("/static", StaticFiles(directory="static"), name="static")
- 
- 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
- 
-def _connect_result_page(success: bool, provider: str, detail: str = "") -> HTMLResponse:
-    """Shown in the tab/window opened via target=_blank once OAuth finishes.
-    This is a separate context from the main app now (see static/index.html
-    target=_blank fix) — closing it and going back to the still-open app to
-    click 'I've connected — refresh' is the intended flow, so this page says
-    so explicitly rather than redirecting into a confusing second app view."""
-    title = f"{provider} connected" if success else f"{provider} connection failed"
-    color = "#2f9e44" if success else "#e03131"
-    check_mark = "✓"
-    x_mark = "✕"
-    emoji = check_mark if success else x_mark
-    body = detail or (
-        "You can close this tab and go back to the app in Zoom."
-        if success
-        else "Go back into Zoom and try connecting again."
-    )
-    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>{title}</title>
-<style>
-body {{ font-family:-apple-system,sans-serif; display:flex; align-items:center;
-        justify-content:center; height:100vh; margin:0; background:#fafafa; }}
-.card {{ text-align:center; padding:32px; max-width:340px; }}
-h1 {{ font-size:16px; color:{color}; margin-bottom:8px; }}
-p {{ font-size:13px; color:#666; line-height:1.5; }}
-</style></head>
-<body><div class="card"><h1>{emoji} {title}</h1><p>{body}</p></div>
-<script>setTimeout(function(){{ try {{ window.close(); }} catch(e) {{}} }}, 2500);</script>
-</body></html>"""
-    return HTMLResponse(content=html)
- 
- 
+
 def _get_user_id(mp_session: Optional[str]) -> str:
     if not mp_session:
-        raise HTTPException(401, "Not authenticated — open the app in Zoom first")
-    uid = read_session_token(mp_session)
-    if not uid:
-        raise HTTPException(401, "Session expired — please reconnect")
-    return uid
- 
- 
-def _get_user_id_for_oauth_start(mp_session: Optional[str], connect_token: Optional[str]) -> str:
-    """Like _get_user_id, but also accepts a one-time connect_token.
- 
-    The OAuth login routes get opened in the system browser (Zoom blocks
-    in-app navigation to external URLs), which means the mp_session cookie
-    — set inside Zoom's own embedded webview — never arrives on this
-    request. There's no way around that; cookies don't cross browser
-    processes. connect_token is the bridge: minted via /api/connect-token
-    while still inside Zoom (where the cookie IS present), then passed
-    along in the link we open externally instead.
+        raise HTTPException(status_code=401, detail="Unauthorized: No active session token found.")
+    user_id = read_session_token(mp_session)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized: Session token has expired.")
+    return user_id
+
+# ---------------------------------------------------------------------------
+# Active Meeting Context Match Route
+# ---------------------------------------------------------------------------
+
+@app.post("/api/meetings/active-match")
+async def active_match_meeting(request: Request, mp_session: Optional[str] = Cookie(None)):
     """
-    if mp_session:
-        uid = read_session_token(mp_session)
-        if uid:
-            return uid
-    if connect_token:
-        uid = read_connect_token(connect_token)
-        if uid:
-            return uid
-        raise HTTPException(
-            401,
-            f"Your connect link is invalid or expired (valid {CONNECT_TOKEN_MAX_AGE // 60} "
-            "minutes) — go back into Zoom and click connect again.",
-        )
-    raise HTTPException(
-        401,
-        "Not authenticated, and no connect link was provided at all — this usually means "
-        "the app is showing a stale cached version. Fully close and reopen the app in Zoom, "
-        "then try connecting again.",
-    )
- 
- 
-def _get_google_token_or_401(user_id: str) -> dict:
-    token = get_google_token(user_id)
-    if not token:
-        raise HTTPException(403, "Google Calendar not connected — visit /auth/google/login")
-    return token
- 
- 
-# ---------------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------------
- 
-@app.get("/health")
-def health():
-    return {"status": "ok", "version": "1.0.0"}
- 
- 
-# ---------------------------------------------------------------------------
-# Zoom OAuth — entry point for the Zoom App sidebar
-# ---------------------------------------------------------------------------
- 
-@app.get("/auth/zoom/login")
-def zoom_login():
-    state = secrets.token_urlsafe(16)
-    _sessions[state] = None
-    return RedirectResponse(get_zoom_auth_url(state))
- 
- 
-@app.get("/auth/zoom/callback")
-def zoom_callback(code: str, response: Response, state: Optional[str] = None):
-    if state and state not in _sessions:
-        raise HTTPException(400, "Invalid OAuth state")
-    if state:
-        _sessions.pop(state)
-    try:
-        token_data = exchange_zoom_code(code)
-        zoom_user = get_zoom_user(token_data["access_token"])
-        user_id = zoom_user["id"]
-        profile = get_user_profile(user_id)
-        if not profile.get("name"):
-            set_user_profile(user_id, {
-                "name": zoom_user.get("display_name", ""),
-                "email": zoom_user.get("email", ""),
-                "zoom_user_id": user_id,
-            })
-        session_token = make_session_token(user_id)
-        response = RedirectResponse("/app")
-        response.set_cookie(SESSION_COOKIE, session_token, httponly=True, samesite="lax", max_age=60*60*24*7)
-        return response
-    except Exception as e:
-        raise HTTPException(400, str(e))
- 
- 
-@app.get("/api/connect-token")
-def connect_token(mp_session: Optional[str] = Cookie(None)):
-    """Call this from inside the Zoom webview (cookie present) right before
-    opening a Google/Outlook connect link externally (cookie absent).
-    The frontend appends the result to the login URL as ?connect_token=..."""
+    Takes structural meeting details from the Zoom Client SDK,
+    cross-references them against upcoming synchronized provider events,
+    and bridges context automatically.
+    """
     user_id = _get_user_id(mp_session)
-    return {"connect_token": make_connect_token(user_id), "expires_in": CONNECT_TOKEN_MAX_AGE}
- 
- 
-# ---------------------------------------------------------------------------
-# Google Calendar OAuth — per user
-# ---------------------------------------------------------------------------
- 
-@app.get("/auth/google/login")
-def google_login(
-    write: bool = False,
-    connect_token: Optional[str] = None,
-    mp_session: Optional[str] = Cookie(None),
-):
-    user_id = _get_user_id_for_oauth_start(mp_session, connect_token)
-    redirect_uri = f"{os.getenv('APP_BASE_URL', 'http://localhost:8000')}/auth/google/callback"
-    state = secrets.token_urlsafe(16)
-    _sessions[state] = user_id
-    url = google_client.get_login_url(include_write_scope=write, redirect_uri=redirect_uri, state=state)
-    return RedirectResponse(url)
- 
- 
-@app.get("/auth/google/callback")
-def google_callback(code: str, state: str = "", write: bool = False):
-    user_id = _sessions.pop(state, None)
-    if not user_id:
-        return _connect_result_page(
-            False, "Google Calendar",
-            "This connect link was already used or has expired. Go back into Zoom and click connect again."
-        )
-    redirect_uri = f"{os.getenv('APP_BASE_URL', 'http://localhost:8000')}/auth/google/callback"
-    try:
-        token_data = google_client.handle_callback(code, include_write_scope=write, redirect_uri=redirect_uri)
-        set_google_token(user_id, token_data)
-        return _connect_result_page(True, "Google Calendar")
-    except Exception as e:
-        return _connect_result_page(False, "Google Calendar", str(e))
- 
- 
-# ---------------------------------------------------------------------------
-# Outlook OAuth — per user
-# ---------------------------------------------------------------------------
- 
-@app.get("/auth/outlook/login")
-def outlook_login(
-    write: bool = False,
-    connect_token: Optional[str] = None,
-    mp_session: Optional[str] = Cookie(None),
-):
-    user_id = _get_user_id_for_oauth_start(mp_session, connect_token)
-    redirect_uri = f"{os.getenv('APP_BASE_URL', 'http://localhost:8000')}/auth/outlook/callback"
-    state = secrets.token_urlsafe(16)
-    _sessions[state] = user_id
-    url = outlook_client.get_login_url(include_write_scope=write, redirect_uri=redirect_uri, state=state)
-    return RedirectResponse(url)
- 
- 
-@app.get("/auth/outlook/callback")
-def outlook_callback(code: str, state: str = "", write: bool = False):
-    user_id = _sessions.pop(state, None)
-    if not user_id:
-        return _connect_result_page(
-            False, "Outlook Calendar",
-            "This connect link was already used or has expired. Go back into Zoom and click connect again."
-        )
-    redirect_uri = f"{os.getenv('APP_BASE_URL', 'http://localhost:8000')}/auth/outlook/callback"
-    try:
-        token_data = outlook_client.handle_callback(code, include_write_scope=write, redirect_uri=redirect_uri)
-        from user_store import set_user
-        set_user(user_id, {"outlook_token": token_data})
-        return _connect_result_page(True, "Outlook Calendar")
-    except Exception as e:
-        return _connect_result_page(False, "Outlook Calendar", str(e))
- 
- 
-# ---------------------------------------------------------------------------
-# User profile
-# ---------------------------------------------------------------------------
- 
-@app.get("/api/me")
-def get_me(mp_session: Optional[str] = Cookie(None)):
-    user_id = _get_user_id(mp_session)
-    profile = get_user_profile(user_id)
-    user_data = get_user(user_id) or {}  # New users have no stored data yet
-    return {
-        "profile": profile,
-        "google_connected": bool(user_data.get("google_token")),
-        "outlook_connected": bool(user_data.get("outlook_token")),
-    }
- 
- 
-@app.post("/api/me/profile")
-def save_profile(req: ProfileRequest, mp_session: Optional[str] = Cookie(None)):
-    user_id = _get_user_id(mp_session)
-    set_user_profile(user_id, req.dict())
-    return {"status": "saved"}
- 
- 
-# ---------------------------------------------------------------------------
-# Meetings
-# ---------------------------------------------------------------------------
- 
-@app.get("/api/meetings/upcoming")
-def upcoming_meetings(hours: int = 48, mp_session: Optional[str] = Cookie(None)):
-    user_id = _get_user_id(mp_session)
-    user_data = get_user(user_id) or {}  # Return empty dict if no user data exists yet
-    results = []
-    errors = {}
- 
-    google_token = user_data.get("google_token")
+    payload = await request.json()
+    
+    zoom_id = str(payload.get("meetingId", "")).strip()
+    zoom_uuid = str(payload.get("meetingUUID", "")).strip()
+    
+    if not zoom_id and not zoom_uuid:
+        raise HTTPException(status_code=400, detail="No active meeting identifier provided by SDK context.")
+    
+    meetings = []
+    source = None
+    
+    google_token = get_google_token(user_id)
     if google_token:
         try:
-            results += [m.model_dump() for m in google_client.list_upcoming(google_token, hours)]
-        except Exception as e:
-            errors["google"] = str(e)
- 
-    outlook_token = user_data.get("outlook_token")
-    if outlook_token:
-        try:
-            results += [m.model_dump() for m in outlook_client.list_upcoming(outlook_token, hours)]
-        except Exception as e:
-            errors["outlook"] = str(e)
- 
-    results.sort(key=lambda m: m["start"])
-    return {"meetings": results, "errors": errors}
- 
- 
-@app.get("/api/meetings/{source}/{event_id}/checklist")
-def meeting_checklist(source: str, event_id: str, mp_session: Optional[str] = Cookie(None)):
+            meetings = google_client.list_upcoming(google_token, hours=24)
+            source = "google"
+        except Exception:
+            pass
+            
+    if not meetings:
+        user_data = get_user(user_id)
+        outlook_token = user_data.get("outlook_token")
+        if outlook_token:
+            try:
+                meetings = outlook_client.list_upcoming(outlook_token, hours=24)
+                source = "outlook"
+            except Exception:
+                pass
+
+    # Compare identifiers seamlessly against joined links or direct metadata
+    for meeting in meetings:
+        link = meeting.join_link or ""
+        if (zoom_id and zoom_id in link) or (zoom_uuid and zoom_uuid in link):
+            return {
+                "matched": True,
+                "source": source or meeting.source,
+                "event_id": meeting.event_id,
+                "meeting": meeting.dict()
+            }
+            
+    return {
+        "matched": False,
+        "available_meetings": [m.dict() for m in meetings],
+        "source": source
+    }
+
+# ---------------------------------------------------------------------------
+# Core Workflow Routes
+# ---------------------------------------------------------------------------
+
+@app.get("/api/meetings")
+def list_meetings(source: str = "google", mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
-    user_data = get_user(user_id) or {}
- 
     if source == "google":
-        token = user_data.get("google_token")
+        token = get_google_token(user_id)
         if not token:
-            raise HTTPException(403, "Google not connected")
-        meeting = google_client.get_event(token, event_id)
-    elif source == "outlook":
+            return {"connected": False, "meetings": []}
+        return {"connected": True, "meetings": [m.dict() for m in google_client.list_upcoming(token)]}
+    else:
+        user_data = get_user(user_id)
         token = user_data.get("outlook_token")
         if not token:
-            raise HTTPException(403, "Outlook not connected")
-        meeting = outlook_client.get_event(token, event_id)
-    else:
-        raise HTTPException(404, "source must be google or outlook")
- 
-    templates = get_user_templates(user_id)
-    matched = None
-    if meeting.series_key and meeting.series_key in templates:
-        from schemas import StandingTemplate
-        matched = StandingTemplate(**templates[meeting.series_key])
- 
-    needs_manual = ["goals", "must_ask_questions", "boundary_overrides"]
-    if meeting.agenda_missing:
-        needs_manual.insert(0, "agenda")
-    if not matched:
-        needs_manual.append("relationship_context")
- 
-    return ChecklistPayload(
-        meeting_name=meeting.title,
-        date_time=meeting.start,
-        attendees=meeting.attendees,
-        agenda_from_invite=meeting.agenda_extracted,
-        agenda_missing=meeting.agenda_missing,
-        matched_template=matched,
-        needs_manual_input=needs_manual,
-    )
- 
- 
-# ---------------------------------------------------------------------------
-# Meeting session — live agent
-# ---------------------------------------------------------------------------
- 
-@app.post("/api/meetings/start")
-def start_meeting(req: MeetingSetupRequest, mp_session: Optional[str] = Cookie(None)):
+            return {"connected": False, "meetings": []}
+        return {"connected": True, "meetings": [m.dict() for m in outlook_client.list_upcoming(token)]}
+
+@app.post("/api/meetings/setup")
+def setup_meeting(req: MeetingSetupRequest, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
-    user_data = get_user(user_id) or {}
+    if req.source == "google":
+        token = get_google_token(user_id)
+        mtg = google_client.get_event(token, req.event_id)
+    else:
+        user_data = get_user(user_id)
+        mtg = outlook_client.get_event(user_data.get("outlook_token"), req.event_id)
+        
     profile = get_user_profile(user_id)
- 
-    checklist = meeting_checklist(req.source, req.event_id, mp_session)
- 
-    system_prompt = prompt_builder.build_system_prompt(
-        checklist=checklist,
-        owner_name=profile.get("name", req.owner_name or "the user"),
-        owner_title=profile.get("title", req.owner_title or ""),
-        owner_company=profile.get("company", req.owner_company or ""),
-        owner_style=req.owner_style or "professional",
-        goals=req.goals or "",
-        avoid=req.avoid or "",
-        must_ask=req.must_ask or [],
-        financial_cap=req.financial_cap or "$0 — flag all",
-        timeline_cap=req.timeline_cap or "1 week",
-        off_limits=req.off_limits or "",
-        formality=req.formality or "professional",
-        directness=req.directness or "get straight to the point",
-        owner_phrases=req.owner_phrases or "",
-        flag_everything=req.flag_everything or False,
-    )
- 
+    sys_prompt = prompt_builder.build_system_prompt(profile, mtg, req)
+    
     _meeting_sessions[user_id] = {
         "history": [],
-        "system_prompt": system_prompt,
+        "system_prompt": sys_prompt,
         "event_id": req.event_id,
-        "source": req.source,
-        "decisions": [],
-        "flags": [],
-        "commitments": [],
+        "source": req.source
     }
- 
-    return {"status": "meeting started", "system_prompt_preview": system_prompt[:200] + "..."}
- 
- 
+    return {"status": "ready", "checklist": {"meeting_name": mtg.title, "agenda_missing": mtg.agenda_missing}}
+
 @app.post("/api/meetings/transcript")
-def process_transcript(
-    speaker: str,
-    text: str,
-    mp_session: Optional[str] = Cookie(None),
-):
+def add_transcript(payload: dict, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
     session = _meeting_sessions.get(user_id)
     if not session:
-        raise HTTPException(400, "No active meeting session — call /api/meetings/start first")
- 
+        raise HTTPException(status_code=400, detail="No active meeting session running.")
+        
     reply, updated_history = agent.respond_to_turn(
-        system_prompt=session["system_prompt"],
-        history=session["history"],
-        speaker=speaker,
-        text=text,
+        session["system_prompt"],
+        session["history"],
+        payload.get("speaker", "Unknown"),
+        payload.get("text", "")
     )
     session["history"] = updated_history
- 
-    return {"reply": reply, "silent": reply is None}
- 
- 
+    return {"reply": reply}
+
 @app.post("/api/meetings/end")
 def end_meeting(mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
     session = _meeting_sessions.get(user_id)
     if not session:
-        raise HTTPException(400, "No active meeting session")
- 
-    deliverables = agent.produce_deliverables(
-        system_prompt=session["system_prompt"],
-        history=session["history"],
-    )
- 
-    _meeting_sessions.pop(user_id, None)
+        raise HTTPException(status_code=400, detail="No active session found.")
+    deliverables = agent.produce_deliverables(session["system_prompt"], session["history"])
     return {"deliverables": deliverables}
- 
- 
-# ---------------------------------------------------------------------------
-# Calendar reminders (write-gated)
-# ---------------------------------------------------------------------------
- 
-@app.post("/api/meetings/{source}/{event_id}/add-reminder/request-token")
-def request_reminder_token(
-    source: str, event_id: str,
-    title: str, start: str, end: str,
-    notes: Optional[str] = None,
-    mp_session: Optional[str] = Cookie(None),
-):
-    _get_user_id(mp_session)
-    return request_confirmation_token(
-        source=source, related_event_id=event_id,
-        title=title, notes=notes, start=start, end=end,
-    )
- 
- 
-@app.post("/api/meetings/{source}/{event_id}/add-reminder")
-def add_reminder(
-    source: str, event_id: str,
-    req: AddReminderRequest,
-    mp_session: Optional[str] = Cookie(None),
-):
-    user_id = _get_user_id(mp_session)
-    user_data = get_user(user_id) or {}
- 
-    from calendar_write import _consume_token
-    try:
-        _consume_token(source, event_id, req)
-    except ConfirmationError as e:
-        raise HTTPException(409, str(e))
- 
-    body = {
-        "summary": req.title,
-        "description": req.notes or "",
-        "start": {"dateTime": req.start},
-        "end": {"dateTime": req.end},
-    }
- 
-    if source == "google":
-        token = user_data.get("google_token")
-        if not token:
-            raise HTTPException(403, "Google not connected")
-        created = google_client.create_event(token, body)
-        return {"status": "reminder created", "event_id": created["id"], "html_link": created.get("htmlLink")}
-    elif source == "outlook":
-        token = user_data.get("outlook_token")
-        if not token:
-            raise HTTPException(403, "Outlook not connected")
-        ol_body = {
-            "subject": req.title,
-            "body": {"contentType": "text", "content": req.notes or ""},
-            "start": {"dateTime": req.start, "timeZone": "UTC"},
-            "end": {"dateTime": req.end, "timeZone": "UTC"},
-        }
-        created = outlook_client.create_event(token, ol_body)
-        return {"status": "reminder created", "event_id": created["id"]}
-    raise HTTPException(404, "source must be google or outlook")
- 
- 
-# ---------------------------------------------------------------------------
-# Templates
-# ---------------------------------------------------------------------------
- 
+
 @app.post("/api/templates")
 def save_template(template: StandingTemplate, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
     set_user_template(user_id, template.series_key, template.dict())
     return template
- 
- 
+
 @app.get("/api/templates/{series_key}")
 def get_template(series_key: str, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
@@ -526,22 +207,9 @@ def get_template(series_key: str, mp_session: Optional[str] = Cookie(None)):
     if series_key not in templates:
         raise HTTPException(404, "No template for that series_key")
     return templates[series_key]
- 
- 
-# ---------------------------------------------------------------------------
-# Zoom App frontend
-# ---------------------------------------------------------------------------
- 
+
 @app.get("/app", response_class=HTMLResponse)
 def zoom_app():
     with open("static/index.html") as f:
         html = f.read()
-    # No-cache: this is the one file most likely to silently go stale in a
-    # webview that holds onto cached HTML across sessions. Without this, a
-    # redeploy can ship new JS that a user never actually loads, and any bug
-    # report based on what they're seeing becomes unreliable.
-    return HTMLResponse(
-        content=html,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
- 
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-store, no-cache"})

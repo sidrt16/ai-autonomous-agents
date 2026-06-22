@@ -3,97 +3,117 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Meeting Proxy</title>
+<title>Meeting Proxy Context Engine</title>
 <script src="https://appssdk.zoom.us/sdk.js"></script>
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px;line-height:1.5;background:#fff;color:#1a1a18;height:100vh;display:flex;flex-direction:column}
-.header{padding:10px 14px;border-bottom:1px solid #e8e8e4;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
-.header-title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:7px}
-.dot{width:8px;height:8px;border-radius:50%;background:#22c55e;display:none}
-.dot.live{display:block;animation:pulse 1.5s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.badge{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500}
-.badge-setup{background:#eff6ff;color:#1d4ed8}
-.badge-live{background:#f0fdf4;color:#166534}
-.tabs{display:flex;border-bottom:1px solid #e8e8e4;flex-shrink:0}
-.tab{flex:1;padding:8px 0;font-size:12px;font-weight:500;text-align:center;cursor:pointer;color:#888;border-bottom:2px solid transparent;background:none;border:none}
-.tab.active{color:#1a1a18;border-bottom-color:#3b5bdb}
-.screen{display:none;flex:1;overflow-y:auto;flex-direction:column}
-.screen.active{display:flex}
-.body{padding:12px 14px;display:flex;flex-direction:column;gap:10px;flex:1}
-.card{background:#f8f8f6;border-radius:8px;padding:10px 12px}
-.label{font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
-.meeting-item{padding:9px 11px;border-radius:8px;border:1px solid #e0dfd8;cursor:pointer;margin-bottom:6px;transition:all .15s}
-.meeting-item:hover{border-color:#aaa;background:#fafafa}
-.meeting-item.sel{border:2px solid #3b5bdb;background:#eff6ff}
-.meeting-title{font-size:13px;font-weight:500;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.meeting-meta{font-size:11px;color:#888}
-input,textarea,select{width:100%;padding:7px 9px;border:1px solid #ddd;border-radius:7px;font-size:13px;font-family:inherit;background:#fff}
-.btn{width:100%;padding:9px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none}
-.btn-primary{background:#3b5bdb;color:#fff}
-.btn-auth{background:#f59e0b;color:#fff;text-align:center;text-decoration:none;display:block;padding:9px;border-radius:8px;font-size:13px;font-weight:500;margin-top:5px;}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:13px;line-height:1.4;background:#fff;color:#1a1a18;height:100vh;display:flex;flex-direction:column}
+  .header{padding:10px 14px;border-bottom:1px solid #e8e8e4;display:flex;align-items:center;justify-content:space-between;background:#fff;z-index:10;flex-shrink:0}
+  .header-title{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+  .dot{width:8px;height:8px;border-radius:50%;background:#22c55e;display:none}
+  .dot.live{display:block;animation:pulse 1.5s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .badge{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:500;background:#eff6ff;color:#1d4ed8}
+  .badge.live{background:#f0fdf4;color:#166534}
+  .tabs{display:flex;border-bottom:1px solid #e8e8e4;flex-shrink:0;background:#fafafa}
+  .tab{flex:1;padding:10px 0;font-size:12px;font-weight:500;text-align:center;cursor:pointer;color:#666;border-bottom:2px solid transparent;background:none;border:none}
+  .tab.active{color:#1a1a18;border-bottom-color:#3b5bdb;font-weight:600}
+  .screen{display:none;flex:1;overflow-y:auto;flex-direction:column}
+  .screen.active{display:flex}
+  .body{padding:14px;display:flex;flex-direction:column;gap:12px;flex:1}
+  .card{background:#f8f8f6;border-radius:8px;padding:12px;border:1px solid #e8e8e4}
+  .label{font-size:10px;font-weight:600;color:#777;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px;display:block}
+  input,textarea,select{width:100%;padding:8px;border:1px solid #dcdbd3;border-radius:6px;font-size:13px;font-family:inherit;background:#fff;margin-bottom:8px}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:#3b5bdb}
+  .btn{width:100%;padding:10px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:background 0.2s}
+  .btn-primary{background:#3b5bdb;color:#fff}
+  .btn-primary:hover{background:#2b49b3}
+  .btn-danger{background:#e03131;color:#fff}
+  .btn-danger:hover{background:#b82020}
+  .transcript-log{background:#fafafa;border:1px solid #e8e8e4;border-radius:6px;height:180px;overflow-y:auto;padding:8px;margin-bottom:8px;font-family:monospace;font-size:11px}
 </style>
 </head>
 <body>
 
 <div class="header">
   <div class="header-title">
-    <div class="dot live" id="live-dot"></div>
+    <div class="dot" id="live-dot"></div>
     <span>Meeting Proxy</span>
   </div>
-  <div class="badge badge-setup" id="status-badge">SETUP</div>
+  <div class="badge" id="app-status">CONFIGURATION</div>
 </div>
 
 <div class="tabs">
-  <button class="tab active" id="tab-selector" onclick="switchTab('selector')">Meetings</button>
-  <button class="tab" id="tab-live" onclick="switchTab('live')">Live Proxy</button>
-  <button class="tab" id="tab-post" onclick="switchTab('post')">Deliverables</button>
+  <button class="tab active" id="tab-config" onclick="switchTab('config')">1. Context Prep</button>
+  <button class="tab" id="tab-live" onclick="switchTab('live')">2. Live Execution</button>
+  <button class="tab" id="tab-post" onclick="switchTab('post')">3. Deliverables</button>
 </div>
 
-<div class="screen active" id="screen-selector">
+<div class="screen active" id="screen-config">
   <div class="body">
-    <div class="label">Native Sync Detection</div>
-    <div id="matching-status" style="font-size:12px; color:#888; margin-bottom:10px; font-weight: 500;">
-      Checking context synchronization...
-    </div>
-    
-    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-      <select id="source-toggle" onchange="loadFallbackList()" style="width: auto; flex: 1;">
-        <option value="google">Google Calendar</option>
-        <option value="outlook">Outlook Calendar</option>
-      </select>
-      <button class="btn btn-primary" onclick="loadFallbackList()" style="width: auto; padding: 5px 12px;">Refresh</button>
+    <div class="card" style="border-left: 4px solid #3b5bdb; background: #f0f7ff;">
+      <span class="label" style="color: #1d4ed8;">Active Zoom Platform Insight</span>
+      <div id="meeting-topic" style="font-weight:600; font-size:14px; color:#1e3a8a;">Detecting active runtime context...</div>
+      <div id="meeting-id" style="font-size:11px; color:#6b7280; margin-top:2px;">ID: fallback_standalone</div>
     </div>
 
-    <div class="label">Available Calendar Schedule</div>
-    <div id="meetings-list" style="max-height: 280px; overflow-y: auto;"></div>
-    <div id="auth-container"></div>
-    <button class="btn btn-primary" id="btn-start-setup" onclick="submitSetup()" style="margin-top:10px;">Initialize Proxy Configuration</button>
+    <div class="card">
+      <span class="label">Strategic Knowledge & Guardrails</span>
+      
+      <label class="label">Proxy Intent / Core Objectives</label>
+      <textarea id="agent-goals" rows="3" placeholder="What core position must the agent protect or brief the team on?"></textarea>
+
+      <label class="label">Items to Explicitly Defend / Avoid</label>
+      <input type="text" id="agent-avoid" placeholder="Avoid alignment on price concessions, timeline drops...">
+
+      <div style="display: flex; gap: 8px;">
+        <div style="flex: 1;">
+          <label class="label">Financial Cap</label>
+          <input type="text" id="agent-caps" value="$0 cap — flag all modifications">
+        </div>
+        <div style="flex: 1;">
+          <label class="label">Timeline Boundaries</label>
+          <input type="text" id="agent-timeline" value="1 week max boundary">
+        </div>
+      </div>
+
+      <label class="label">Off-Limits Domain Data</label>
+      <input type="text" id="agent-off-limits" placeholder="Internal margin definitions, unreleased feature maps">
+    </div>
+
+    <button class="btn btn-primary" id="btn-promote" onclick="promoteProxyToActive()">Promote Agent to Active Proxy</button>
   </div>
 </div>
 
 <div class="screen" id="screen-live">
   <div class="body">
     <div class="card">
-      <div class="label">Simulate Transcript Node</div>
-      <input type="text" id="transcript-input" placeholder="Type speaker name and message..." style="margin-bottom:8px;">
-      <button class="btn btn-primary" onclick="sendMockTranscript()">Inject Turn</button>
+      <span class="label">Real-time Transcript Feed Injection</span>
+      <div class="transcript-log" id="live-transcript-box">[System initialized. Awaiting manual configuration promotional link...]</div>
+      
+      <div style="display:flex; gap:6px;">
+        <input type="text" id="mock-speaker" value="Team Member" style="width:110px; margin-bottom:0;">
+        <input type="text" id="transcript-input" placeholder="Type sentence spoken by attendee..." style="flex:1; margin-bottom:0;">
+      </div>
+      <button class="btn btn-primary" onclick="injectMockTurn()" style="margin-top:8px;">Transmit Live Turn</button>
     </div>
-    <button class="btn btn-primary" onclick="terminateMeeting()" style="background:#e03131; margin-top:20px;">Complete & End Meeting</button>
+    
+    <button class="btn btn-danger" onclick="terminateMeeting()" style="margin-top:12px;">Conclude Session & Extract Logs</button>
   </div>
 </div>
 
 <div class="screen" id="screen-post">
   <div class="body">
-    <div class="label">Generated Output Deliverables</div>
-    <textarea id="deliverables-box" style="height:350px;" readonly></textarea>
+    <div class="card" style="flex:1; display:flex; flex-direction:column;">
+      <span class="label">Claude Consolidated Deliverables</span>
+      <textarea id="deliverables-box" style="flex:1; min-height:360px;" readonly placeholder="Complete synthesis logs will stream here post extraction closure..."></textarea>
+    </div>
   </div>
 </div>
 
 <script>
-let currentSelectedEvent = null;
-let currentSource = 'google';
+let activeMeetingId = "fallback_standalone";
+let activeTitle = "Standalone Space / Impromptu Call";
 
 function switchTab(tabId) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -102,101 +122,89 @@ function switchTab(tabId) {
   document.getElementById(`screen-${tabId}`).classList.add('active');
 }
 
-function selectMeetingItem(element, eventId, source) {
-  document.querySelectorAll('.meeting-item').forEach(item => item.classList.remove('sel'));
-  element.classList.add('sel');
-  currentSelectedEvent = eventId;
-  currentSource = source;
-}
-
-async function loadFallbackList() {
-  const src = document.getElementById('source-toggle').value;
-  currentSource = src;
-  const res = await fetch(`/api/meetings?source=${src}`);
-  const data = await res.json();
-  
-  if (data.connected === false) {
-    let connectTokenParam = "";
-    try {
-      const tokenRes = await fetch('/api/connect-token');
-      if (tokenRes.ok) {
-        const tokenData = await tokenRes.json();
-        connectTokenParam = `?connect_token=${encodeURIComponent(tokenData.connect_token)}`;
-      }
-    } catch (err) {
-      console.error("Failed to generate short-lived bridge token:", err);
+async function checkNativeZoomEnvironment() {
+  try {
+    await zoomSdk.config({ capabilities: ['getMeetingContext'] });
+    const context = await zoomSdk.getMeetingContext();
+    if (context && context.meetingID) {
+      activeMeetingId = context.meetingID;
+      activeTitle = context.meetingTopic || "Active Platform Call";
     }
-
-    document.getElementById('auth-container').innerHTML = `
-      <div class="card" style="text-align: center; margin-bottom: 10px; border: 1px dashed #f59e0b; padding: 12px;">
-        <p style="font-size: 12px; margin-bottom:8px; color:#555; font-weight:500;">
-          Calendar token not found for your session.
-        </p>
-        <a href="/auth/${src}/login${connectTokenParam}" target="_blank" class="btn-auth">
-          Connect ${src === 'google' ? 'Google' : 'Outlook'} Calendar
-        </a>
-      </div>
-    `;
-    renderMeetingsList([], src);
-  } else {
-    document.getElementById('auth-container').innerHTML = '';
-    renderMeetingsList(data.meetings || [], src);
+  } catch (err) {
+    console.warn("Running inside sandbox webview context fallback.", err);
   }
+  document.getElementById('meeting-topic').innerText = activeTitle;
+  document.getElementById('meeting-id').innerText = `ID: ${activeMeetingId}`;
 }
 
-function renderMeetingsList(meetings, source) {
-  const container = document.getElementById('meetings-list');
-  if(!meetings || meetings.length === 0) {
-    container.innerHTML = `<div style="color:#888; padding: 20px 0; text-align:center;">No upcoming synchronized events found.</div>`;
-    return;
-  }
-  container.innerHTML = meetings.map(m => `
-    <div class="meeting-item" onclick="selectMeetingItem(this, '${m.event_id}', '${source}')">
-      <div class="meeting-title">${esc(m.title)}</div>
-      <div class="meeting-meta">${m.start.split('T')[1]?.substring(0,5) || ''} | Event ID: ${m.event_id.substring(0,8)}...</div>
-    </div>
-  `).join('');
-}
+async function promoteProxyToActive() {
+  const payload = {
+    meeting_id: activeMeetingId,
+    title: activeTitle,
+    goals: document.getElementById('agent-goals').value,
+    avoid: document.getElementById('agent-avoid').value,
+    financial_cap: document.getElementById('agent-caps').value,
+    timeline_cap: document.getElementById('agent-timeline').value,
+    off_limits: document.getElementById('agent-off-limits').value
+  };
 
-async function submitSetup() {
-  if (!currentSelectedEvent) return alert("Please select a meeting from the calendar schedule first.");
-  const res = await fetch('/api/meetings/setup', {
+  const res = await fetch('/api/proxy/active-promote', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ source: currentSource, event_id: currentSelectedEvent })
+    body: JSON.stringify(payload)
   });
-  const data = await res.json();
-  if (data.status === 'ready') {
-    document.getElementById('status-badge').className = "badge badge-live";
-    document.getElementById('status-badge').innerText = "LIVE";
-    document.getElementById('live-dot').style.display = 'block';
+
+  if (res.ok) {
+    document.getElementById('app-status').className = "badge live";
+    document.getElementById('app-status').innerText = "PROXY RUNNING";
+    document.getElementById('live-dot').classList.add('live');
+    document.getElementById('live-transcript-box').innerHTML = `=== Proxy Context Engaged for ID: ${activeMeetingId} ===\n`;
     switchTab('live');
+  } else {
+    alert("Context alignment rejection from endpoint setup.");
   }
 }
 
-async function sendMockTranscript() {
-  const input = document.getElementById('transcript-input').value;
-  await fetch('/api/meetings/transcript', {
+async function injectMockTurn() {
+  const speaker = document.getElementById('mock-speaker').value || "Unknown";
+  const text = document.getElementById('transcript-input').value;
+  if (!text.strip) return;
+
+  const logBox = document.getElementById('live-transcript-box');
+  logBox.innerHTML += `[${speaker}]: ${text}\n`;
+  logBox.scrollTop = logBox.scrollHeight;
+
+  document.getElementById('transcript-input').value = '';
+
+  const res = await fetch(`/api/proxy/transcript/${encodeURIComponent(activeMeetingId)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ speaker: "User", text: input })
+    body: JSON.stringify({ speaker: speaker, text: text })
   });
-  document.getElementById('transcript-input').value = '';
+
+  const data = await res.json();
+  if (data.reply) {
+    logBox.innerHTML += `👉 [PROXY AGENT]: ${data.reply}\n`;
+    logBox.scrollTop = logBox.scrollHeight;
+  }
 }
 
 async function terminateMeeting() {
-  const res = await fetch('/api/meetings/end', { method: 'POST' });
+  const res = await fetch(`/api/proxy/end/${encodeURIComponent(activeMeetingId)}`, { method: 'POST' });
   const data = await res.json();
   document.getElementById('deliverables-box').value = data.deliverables;
+  
+  document.getElementById('app-status').className = "badge";
+  document.getElementById('app-status').innerText = "EXTRACTED";
+  document.getElementById('live-dot').classList.remove('live');
   switchTab('post');
 }
 
-function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-window.addEventListener('load', async () => {
-  document.getElementById('matching-status').innerText = "Running outside active meeting context. Manual selection mode active.";
-  loadFallbackList();
+document.getElementById('transcript-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') injectMockTurn();
 });
+
+window.addEventListener('DOMContentLoaded', checkNativeZoomEnvironment);
 </script>
 </body>
 </html>

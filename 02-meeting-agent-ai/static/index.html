@@ -25,9 +25,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-siz
 .body{padding:12px 14px;display:flex;flex-direction:column;gap:10px;flex:1}
 .card{background:#f8f8f6;border-radius:8px;padding:10px 12px}
 .label{font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
-.meeting-item{padding:9px 11px;border-radius:8px;border:1px solid #e0dfd8;cursor:pointer;margin-bottom:6px;transition:border-color .15s}
-.meeting-item:hover{border-color:#aaa}
-.meeting-item.sel{border:1.5px solid #3b5bdb;background:#eff6ff}
+.meeting-item{padding:9px 11px;border-radius:8px;border:1px solid #e0dfd8;cursor:pointer;margin-bottom:6px;transition:all .15s}
+.meeting-item:hover{border-color:#aaa;background:#fafafa}
+.meeting-item.sel{border:2px solid #3b5bdb;background:#eff6ff}
 .meeting-title{font-size:13px;font-weight:500;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .meeting-meta{font-size:11px;color:#888}
 input,textarea,select{width:100%;padding:7px 9px;border:1px solid #ddd;border-radius:7px;font-size:13px;font-family:inherit;background:#fff}
@@ -55,11 +55,20 @@ input,textarea,select{width:100%;padding:7px 9px;border:1px solid #ddd;border-ra
 <div class="screen active" id="screen-selector">
   <div class="body">
     <div class="label">Native Sync Detection</div>
-    <div id="matching-status" style="font-size:12px; color:#666; margin-bottom:10px;">
-      Checking active Zoom client meeting context...
+    <div id="matching-status" style="font-size:12px; color:#c92a2a; margin-bottom:10px; font-weight: 500;">
+      Checking sync state...
     </div>
+    
+    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+      <select id="source-toggle" onchange="loadFallbackList()" style="width: auto; flex: 1;">
+        <option value="google">Google Calendar</option>
+        <option value="outlook">Outlook Calendar</option>
+      </select>
+      <button class="btn btn-primary" onclick="loadFallbackList()" style="width: auto; padding: 5px 12px;">Refresh</button>
+    </div>
+
     <div class="label">Available Calendar Schedule</div>
-    <div id="meetings-list"></div>
+    <div id="meetings-list" style="max-height: 280px; overflow-y: auto;"></div>
     <button class="btn btn-primary" id="btn-start-setup" onclick="submitSetup()" style="margin-top:10px;">Initialize Proxy Configuration</button>
   </div>
 </div>
@@ -93,15 +102,37 @@ function switchTab(tabId) {
   document.getElementById(`screen-${tabId}`).classList.add('active');
 }
 
-async function selectMeeting(eventId, source) {
+function selectMeetingItem(element, eventId, source) {
+  document.querySelectorAll('.meeting-item').forEach(item => item.classList.remove('sel'));
+  element.classList.add('sel');
   currentSelectedEvent = eventId;
   currentSource = source;
-  document.getElementById('matching-status').innerText = `Matched running meeting in calendar list successfully (${source}).`;
-  submitSetup();
+}
+
+async function loadFallbackList() {
+  const src = document.getElementById('source-toggle').value;
+  currentSource = src;
+  const res = await fetch(`/api/meetings?source=${src}`);
+  const data = await res.json();
+  renderMeetingsList(data.meetings || [], src);
+}
+
+function renderMeetingsList(meetings, source) {
+  const container = document.getElementById('meetings-list');
+  if(!meetings || meetings.length === 0) {
+    container.innerHTML = `<div style="color:#888; padding: 20px 0; text-align:center;">No upcoming synchronized events found.</div>`;
+    return;
+  }
+  container.innerHTML = meetings.map(m => `
+    <div class="meeting-item" onclick="selectMeetingItem(this, '${m.event_id}', '${source}')">
+      <div class="meeting-title">${esc(m.title)}</div>
+      <div class="meeting-meta">${new Date(m.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} | ID: ${m.event_id.substring(0,8)}...</div>
+    </div>
+  `).join('');
 }
 
 async function submitSetup() {
-  if (!currentSelectedEvent) return alert("Select or match a meeting first.");
+  if (!currentSelectedEvent) return alert("Please click to select an event from the calendar list first.");
   const res = await fetch('/api/meetings/setup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -136,6 +167,8 @@ async function terminateMeeting() {
   switchTab('post');
 }
 
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
 window.addEventListener('load', async () => {
   try {
     if (typeof zoomSdk !== 'undefined') {
@@ -147,18 +180,24 @@ window.addEventListener('load', async () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ meetingId: context.meetingId, meetingUUID: context.meetingUUID })
-        });
+        })
         const result = await matchRes.json();
         if (result.matched) {
-          selectMeeting(result.event_id, result.source);
+          document.getElementById('matching-status').style.color = "#22c55e";
+          document.getElementById('matching-status').innerText = `Matched meeting context automatically (${result.source}).`;
+          currentSelectedEvent = result.event_id;
+          currentSource = result.source;
+          submitSetup();
           return;
         }
-        document.getElementById('matching-status').innerText = "Active Zoom context found but no matching calendar event found.";
       }
     }
+    throw new Error("No active SDK match context available");
   } catch (err) {
-    console.error("Zoom SDK match failed:", err);
-    document.getElementById('matching-status').innerText = "Failed to fetch Zoom app context natively. Falling back.";
+    console.log("SDK context fallback triggered:", err);
+    document.getElementById('matching-status').style.color = "#888";
+    document.getElementById('matching-status').innerText = "Running outside active matching pipeline. Manual selection active.";
+    loadFallbackList();
   }
 });
 </script>

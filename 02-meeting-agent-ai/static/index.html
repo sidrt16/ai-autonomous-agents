@@ -116,10 +116,25 @@ async function loadFallbackList() {
   const data = await res.json();
   
   if (data.connected === false) {
+    let connectTokenParam = "";
+    try {
+      const tokenRes = await fetch('/api/connect-token');
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json();
+        connectTokenParam = `?connect_token=${encodeURIComponent(tokenData.connect_token)}`;
+      }
+    } catch (err) {
+      console.error("Failed to generate short-lived bridge token:", err);
+    }
+
     document.getElementById('auth-container').innerHTML = `
-      <div class="card" style="text-align: center; margin-bottom: 10px;">
-        <p style="font-size: 12px; margin-bottom:8px; color:#555;">Calendar token not found for your session.</p>
-        <a href="/auth/${src}/login" target="_blank" class="btn-auth">Connect ${src === 'google' ? 'Google' : 'Outlook'} Calendar</a>
+      <div class="card" style="text-align: center; margin-bottom: 10px; border: 1px dashed #f59e0b; padding: 12px;">
+        <p style="font-size: 12px; margin-bottom:8px; color:#555; font-weight:500;">
+          Calendar token not found for your session.
+        </p>
+        <a href="/auth/${src}/login${connectTokenParam}" target="_blank" class="btn-auth">
+          Connect ${src === 'google' ? 'Google' : 'Outlook'} Calendar
+        </a>
       </div>
     `;
     renderMeetingsList([], src);

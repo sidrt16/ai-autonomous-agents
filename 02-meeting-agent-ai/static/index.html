@@ -31,6 +31,7 @@
   .btn-danger{background:#e03131;color:#fff}
   .btn-danger:hover{background:#b82020}
   .transcript-log{background:#fafafa;border:1px solid #e8e8e4;border-radius:6px;height:180px;overflow-y:auto;padding:8px;margin-bottom:8px;font-family:monospace;font-size:11px}
+  .error-display{background:#fdf2f2;border:1px solid #f8b4b4;color:#9b1c1c;padding:10px;border-radius:6px;font-size:12px;margin-bottom:10px;display:none}
 </style>
 </head>
 <body>
@@ -51,6 +52,8 @@
 
 <div class="screen active" id="screen-config">
   <div class="body">
+    <div id="error-banner" class="error-display"></div>
+
     <div class="card" style="border-left: 4px solid #3b5bdb; background: #f0f7ff;">
       <span class="label" style="color: #1d4ed8;">Active Zoom Platform Insight</span>
       <div id="meeting-topic" style="font-weight:600; font-size:14px; color:#1e3a8a;">Detecting active runtime context...</div>
@@ -115,6 +118,16 @@
 let activeMeetingId = "fallback_standalone";
 let activeTitle = "Standalone Space / Impromptu Call";
 
+function showError(msg) {
+  const eb = document.getElementById('error-banner');
+  eb.innerText = msg;
+  eb.style.display = 'block';
+}
+
+function clearError() {
+  document.getElementById('error-banner').style.display = 'none';
+}
+
 function switchTab(tabId) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -138,6 +151,7 @@ async function checkNativeZoomEnvironment() {
 }
 
 async function promoteProxyToActive() {
+  clearError();
   const payload = {
     meeting_id: activeMeetingId,
     title: activeTitle,
@@ -148,27 +162,32 @@ async function promoteProxyToActive() {
     off_limits: document.getElementById('agent-off-limits').value
   };
 
-  const res = await fetch('/api/proxy/active-promote', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  try {
+    const res = await fetch('/api/proxy/active-promote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
 
-  if (res.ok) {
-    document.getElementById('app-status').className = "badge live";
-    document.getElementById('app-status').innerText = "PROXY RUNNING";
-    document.getElementById('live-dot').classList.add('live');
-    document.getElementById('live-transcript-box').innerHTML = `=== Proxy Context Engaged for ID: ${activeMeetingId} ===\n`;
-    switchTab('live');
-  } else {
-    alert("Context alignment rejection from endpoint setup.");
+    if (res.ok) {
+      document.getElementById('app-status').className = "badge live";
+      document.getElementById('app-status').innerText = "PROXY RUNNING";
+      document.getElementById('live-dot').classList.add('live');
+      document.getElementById('live-transcript-box').innerHTML = `=== Proxy Context Engaged for ID: ${activeMeetingId} ===\n`;
+      switchTab('live');
+    } else {
+      const errText = await res.text();
+      showError(`Promotion failed (${res.status}): ${errText}`);
+    }
+  } catch (err) {
+    showError(`Network connection exception: ${err.message}`);
   }
 }
 
 async function injectMockTurn() {
   const speaker = document.getElementById('mock-speaker').value || "Unknown";
   const text = document.getElementById('transcript-input').value;
-  if (!text.strip) return;
+  if (!text || !text.trim()) return;
 
   const logBox = document.getElementById('live-transcript-box');
   logBox.innerHTML += `[${speaker}]: ${text}\n`;
@@ -176,28 +195,38 @@ async function injectMockTurn() {
 
   document.getElementById('transcript-input').value = '';
 
-  const res = await fetch(`/api/proxy/transcript/${encodeURIComponent(activeMeetingId)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ speaker: speaker, text: text })
-  });
+  try {
+    const res = await fetch(`/api/proxy/transcript/${encodeURIComponent(activeMeetingId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ speaker: speaker, text: text })
+    });
 
-  const data = await res.json();
-  if (data.reply) {
-    logBox.innerHTML += `👉 [PROXY AGENT]: ${data.reply}\n`;
-    logBox.scrollTop = logBox.scrollHeight;
+    if (res.ok) {
+      const data = await res.json();
+      if (data.reply) {
+        logBox.innerHTML += `👉 [PROXY AGENT]: ${data.reply}\n`;
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+    }
+  } catch(e) {
+    logBox.innerHTML += `⚠️ [System Error]: Failed to transmit turn.\n`;
   }
 }
 
 async function terminateMeeting() {
-  const res = await fetch(`/api/proxy/end/${encodeURIComponent(activeMeetingId)}`, { method: 'POST' });
-  const data = await res.json();
-  document.getElementById('deliverables-box').value = data.deliverables;
-  
-  document.getElementById('app-status').className = "badge";
-  document.getElementById('app-status').innerText = "EXTRACTED";
-  document.getElementById('live-dot').classList.remove('live');
-  switchTab('post');
+  try {
+    const res = await fetch(`/api/proxy/end/${encodeURIComponent(activeMeetingId)}`, { method: 'POST' });
+    const data = await res.json();
+    document.getElementById('deliverables-box').value = data.deliverables;
+    
+    document.getElementById('app-status').className = "badge";
+    document.getElementById('app-status').innerText = "EXTRACTED";
+    document.getElementById('live-dot').classList.remove('live');
+    switchTab('post');
+  } catch(e) {
+    alert("Could not extract summary data cleanly.");
+  }
 }
 
 document.getElementById('transcript-input').addEventListener('keydown', e => {

@@ -64,16 +64,32 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 def _get_user_id(mp_session: Optional[str]) -> str:
-    # Fallback to a mock/default user ID if running local tests or testing unauthenticated
     if not mp_session:
-        return os.getenv("MOCK_USER_ID", "default_zoom_user")
+        return "default_zoom_user"
     user_id = read_session_token(mp_session)
     if not user_id:
-        return os.getenv("MOCK_USER_ID", "default_zoom_user")
+        return "default_zoom_user"
     return user_id
 
 # ---------------------------------------------------------------------------
-# Active Meeting Context Match Route & Calendar Fetching
+# Calendar Authorization Gateways
+# ---------------------------------------------------------------------------
+
+@app.get("/auth/google/login")
+def google_login(mp_session: Optional[str] = Cookie(None)):
+    user_id = _get_user_id(mp_session)
+    state = make_connect_token(user_id)
+    return RedirectResponse(google_client.get_login_url(state=state))
+
+@app.get("/auth/google/callback")
+def google_callback(code: str, state: str):
+    user_id = read_connect_token(state) or "default_zoom_user"
+    token_data = google_client.handle_callback(code)
+    set_google_token(user_id, token_data)
+    return HTMLResponse("<h3>Google Calendar Linked Successfully! You can close this window and refresh your Zoom app.</h3>")
+
+# ---------------------------------------------------------------------------
+# Core APIs
 # ---------------------------------------------------------------------------
 
 @app.get("/api/meetings")
@@ -118,18 +134,7 @@ async def active_match_meeting(request: Request, mp_session: Optional[str] = Coo
             source = "google"
         except Exception:
             pass
-            
-    if not meetings:
-        user_data = get_user(user_id)
-        outlook_token = user_data.get("outlook_token")
-        if outlook_token:
-            try:
-                meetings = outlook_client.list_upcoming(outlook_token, hours=24)
-                source = "outlook"
-            except Exception:
-                pass
 
-    # Look for matching indicators in URLs or meeting properties
     if zoom_id or zoom_uuid:
         for meeting in meetings:
             link = meeting.join_link or ""
@@ -146,10 +151,6 @@ async def active_match_meeting(request: Request, mp_session: Optional[str] = Coo
         "available_meetings": [m.dict() for m in meetings],
         "source": source
     }
-
-# ---------------------------------------------------------------------------
-# Session Workflow Routes
-# ---------------------------------------------------------------------------
 
 @app.post("/api/meetings/setup")
 def setup_meeting(req: MeetingSetupRequest, mp_session: Optional[str] = Cookie(None)):
@@ -196,20 +197,6 @@ def end_meeting(mp_session: Optional[str] = Cookie(None)):
         raise HTTPException(status_code=400, detail="No active session found.")
     deliverables = agent.produce_deliverables(session["system_prompt"], session["history"])
     return {"deliverables": deliverables}
-
-@app.post("/api/templates")
-def save_template(template: StandingTemplate, mp_session: Optional[str] = Cookie(None)):
-    user_id = _get_user_id(mp_session)
-    set_user_template(user_id, template.series_key, template.dict())
-    return template
-
-@app.get("/api/templates/{series_key}")
-def get_template(series_key: str, mp_session: Optional[str] = Cookie(None)):
-    user_id = _get_user_id(mp_session)
-    templates = get_user_templates(user_id)
-    if series_key not in templates:
-        raise HTTPException(404, "No template for that series_key")
-    return templates[series_key]
 
 @app.get("/app", response_class=HTMLResponse)
 def zoom_app():

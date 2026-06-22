@@ -88,6 +88,19 @@ class TranscriptPayload(BaseModel):
     text: str
 
 # ---------------------------------------------------------------------------
+# Object Wrapper for Prompt Engine Compilation
+# ---------------------------------------------------------------------------
+
+class StructuredChecklist:
+    """Wraps dictionary keys into object properties to support dot-notation lookups."""
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+            
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -139,19 +152,18 @@ def promote_active_proxy(req: ActiveProxySetupRequest, mp_session: Optional[str]
     user_id = _get_user_id(mp_session)
     profile = get_user_profile(user_id) or {}
     
-    # Construct a structured checklist matching ChecklistPayload fields to satisfy internal lookups
-    mock_checklist = {
-        "meeting_name": req.title,
-        "date_time": "",
-        "attendees": [],
-        "agenda_from_invite": req.goals or "",
-        "agenda_missing": not bool(req.goals),
-        "matched_template": None,
-        "needs_manual_input": []
-    }
+    # Initialize as an object instance to allow dot-notation access (.attendees) inside prompt compiler
+    mock_checklist = StructuredChecklist(
+        meeting_name=req.title,
+        date_time="",
+        attendees=[],
+        agenda_from_invite=req.goals or "",
+        agenda_missing=not bool(req.goals),
+        matched_template=None,
+        needs_manual_input=[]
+    )
     
     try:
-        # Supply all parameters explicitly to prevent compilation shifting
         system_prompt = prompt_builder.build_system_prompt(
             checklist=mock_checklist,
             owner_name=profile.get("name") or "User",
@@ -160,7 +172,7 @@ def promote_active_proxy(req: ActiveProxySetupRequest, mp_session: Optional[str]
             owner_style=profile.get("style") or "professional",
             goals=req.goals or "",
             avoid=req.avoid or "",
-            must_ask=[],  # Safe empty iterable interface placeholder
+            must_ask=[],
             financial_cap=req.financial_cap or "$0 — flag all",
             timeline_cap=req.timeline_cap or "1 week",
             off_limits=req.off_limits or "",

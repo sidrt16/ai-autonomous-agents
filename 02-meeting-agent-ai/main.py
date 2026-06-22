@@ -139,15 +139,28 @@ def promote_active_proxy(req: ActiveProxySetupRequest, mp_session: Optional[str]
     user_id = _get_user_id(mp_session)
     profile = get_user_profile(user_id) or {}
     
+    # Construct a structured checklist matching ChecklistPayload fields to satisfy internal lookups
+    mock_checklist = {
+        "meeting_name": req.title,
+        "date_time": "",
+        "attendees": [],
+        "agenda_from_invite": req.goals or "",
+        "agenda_missing": not bool(req.goals),
+        "matched_template": None,
+        "needs_manual_input": []
+    }
+    
     try:
-        # Pass exactly the 11 keywords defined in the compiler signature.
+        # Supply all parameters explicitly to prevent compilation shifting
         system_prompt = prompt_builder.build_system_prompt(
+            checklist=mock_checklist,
+            owner_name=profile.get("name") or "User",
             owner_title=profile.get("title") or "",
             owner_company=profile.get("company") or "",
             owner_style=profile.get("style") or "professional",
             goals=req.goals or "",
             avoid=req.avoid or "",
-            must_ask=[],  # Satisfies the required internal iterable argument safely
+            must_ask=[],  # Safe empty iterable interface placeholder
             financial_cap=req.financial_cap or "$0 — flag all",
             timeline_cap=req.timeline_cap or "1 week",
             off_limits=req.off_limits or "",

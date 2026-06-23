@@ -1,24 +1,49 @@
 """
-Meeting Proxy Agent — Production-Hardened Main Backend
-Handles missing dependencies gracefully with full fallback support.
+Meeting Proxy Agent — Complete Production Backend
+Integrates all real modules: zoom_auth, google_client, outlook_client, user_store, agent, prompt_builder
 """
 import os
-import sys
 import secrets
-import json
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Query, Cookie, Response
+import logging
+from typing import Optional
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException, Cookie
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
-# Initialize FastAPI app first
-app = FastAPI(title="Meeting Proxy Agent")
+# Real modules from your repo
+from config import settings
+from zoom_auth import (
+    get_zoom_auth_url, exchange_zoom_code, get_zoom_user,
+    make_session_token, read_session_token, SESSION_COOKIE, SESSION_MAX_AGE,
+    make_connect_token, read_connect_token, CONNECT_TOKEN_MAX_AGE,
+)
+from user_store import (
+    get_user, set_user, get_user_profile, set_user_profile,
+)
+from google_client import (
+    get_login_url as google_get_login_url,
+    handle_callback as google_handle_callback,
+    list_upcoming as google_list_upcoming,
+)
+from outlook_client import (
+    get_login_url as outlook_get_login_url,
+    handle_callback as outlook_handle_callback,
+    list_upcoming as outlook_list_upcoming,
+)
+from agent import respond_to_turn, produce_deliverables
+from prompt_builder import build_system_prompt
 
-# CORS
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# FastAPI Setup
+app = FastAPI(title="Meeting Proxy Agent", version="1.0.0")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,76 +52,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============================================================================
-# Configuration & Settings
-# ============================================================================
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
-class Settings:
-    APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "dev-secret-key-change-in-production")
-    ZOOM_CLIENT_ID = os.getenv("ZOOM_CLIENT_ID", "")
-    ZOOM_CLIENT_SECRET = os.getenv("ZOOM_CLIENT_SECRET", "")
-    GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-    GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-    MS_CLIENT_ID = os.getenv("MS_CLIENT_ID", "")
-    MS_CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET", "")
-    APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000")
+# Runtime State
+_sessions = {}
+_meeting_contexts = {}
+_active_meetings = {}
 
-settings = Settings()
-
-# ============================================================================
-# Token Management (Self-Contained)
-# ============================================================================
-
-_signer = URLSafeTimedSerializer(settings.APP_SECRET_KEY)
-SESSION_COOKIE = "mp_session"
-SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
-CONNECT_TOKEN_MAX_AGE = 60 * 10  # 10 minutes
-
-def make_session_token(user_id: str) -> str:
-    return _signer.dumps(user_id)
-
-def read_session_token(token: str) -> Optional[str]:
-    try:
-        return _signer.loads(token, max_age=SESSION_MAX_AGE)
-    except (BadSignature, SignatureExpired):
-        return None
-
-def make_connect_token(user_id: str) -> str:
-    return _signer.dumps(user_id, salt="connect-token")
-
-def read_connect_token(token: str) -> Optional[str]:
-    try:
-        return _signer.loads(token, max_age=CONNECT_TOKEN_MAX_AGE, salt="connect-token")
-    except (BadSignature, SignatureExpired):
-        return None
-
-# ============================================================================
-# Simple In-Memory Storage (Fallback)
-# ============================================================================
-
-_users = {}  # user_id -> {profile, google_token, outlook_token}
-_meeting_contexts = {}  # user_id -> {meeting_id -> context}
-_active_meetings = {}  # meeting_id -> {system_prompt, history, ...}
-_sessions = {}  # state -> user_id (CSRF)
-
-def get_user(user_id: str) -> Dict[str, Any]:
-    return _users.get(user_id, {})
-
-def set_user(user_id: str, data: Dict[str, Any]):
-    _users[user_id] = {**_users.get(user_id, {}), **data}
-
-def get_user_profile(user_id: str) -> Dict[str, Any]:
-    return _users.get(user_id, {}).get("profile", {})
-
-def set_user_profile(user_id: str, profile: Dict[str, Any]):
-    if user_id not in _users:
-        _users[user_id] = {}
-    _users[user_id]["profile"] = profile
-
-# ============================================================================
 # Models
-# ============================================================================
-
 class MeetingContext(BaseModel):
     meeting_id: str
     title: Optional[str] = None
@@ -105,6 +69,8 @@ class MeetingContext(BaseModel):
     financial_cap: Optional[str] = "$0 — flag all"
     timeline_cap: Optional[str] = "1 week"
     off_limits: Optional[str] = None
+    formality: Optional[str] = "professional"
+    directness: Optional[str] = "balanced"
 
 class TranscriptTurn(BaseModel):
     speaker: str
@@ -114,11 +80,9 @@ class ProfileData(BaseModel):
     name: Optional[str] = None
     title: Optional[str] = None
     company: Optional[str] = None
+    communication_style: Optional[str] = "professional"
 
-# ============================================================================
 # Helpers
-# ============================================================================
-
 def _get_user_id(mp_session: Optional[str]) -> str:
     if not mp_session:
         raise HTTPException(401, "Not authenticated — sign in with Zoom first")
@@ -126,6 +90,17 @@ def _get_user_id(mp_session: Optional[str]) -> str:
     if not uid:
         raise HTTPException(401, "Session expired — sign in again")
     return uid
+
+def _get_user_id_for_oauth_start(mp_session: Optional[str], connect_token: Optional[str]) -> str:
+    if mp_session:
+        uid = read_session_token(mp_session)
+        if uid:
+            return uid
+    if connect_token:
+        uid = read_connect_token(connect_token)
+        if uid:
+            return uid
+    raise HTTPException(401, "Not authenticated")
 
 def _connect_result_page(success: bool, provider: str, detail: str = "") -> HTMLResponse:
     title = f"{provider} connected" if success else f"{provider} connection failed"
@@ -149,10 +124,7 @@ p {{ font-size:13px; color:#666; line-height:1.5; }}
 </body></html>"""
     return HTMLResponse(content=html)
 
-# ============================================================================
 # Health & Status
-# ============================================================================
-
 @app.get("/health")
 def health():
     return {"status": "ok", "version": "1.0.0"}
@@ -164,42 +136,51 @@ def status():
         "zoom_configured": bool(settings.ZOOM_CLIENT_ID),
         "google_configured": bool(settings.GOOGLE_CLIENT_ID),
         "outlook_configured": bool(settings.MS_CLIENT_ID),
-        "users_in_memory": len(_users),
+        "anthropic_configured": bool(settings.ANTHROPIC_API_KEY),
+        "timestamp": datetime.utcnow().isoformat(),
     }
 
-# ============================================================================
-# Phase 1: Setup (Zoom Auth + Calendars)
-# ============================================================================
-
+# Phase 1: Setup
 @app.get("/auth/zoom/login")
 def zoom_login():
-    """Mock Zoom login for testing. Replace with real zoom_auth in production."""
-    # For production: return RedirectResponse(get_zoom_auth_url(state))
     state = secrets.token_urlsafe(16)
-    _sessions[state] = "demo-user"
-    # Mock redirect — in production, this goes to Zoom OAuth URL
-    return RedirectResponse("/auth/zoom/callback?code=demo-code&state=" + state)
+    _sessions[state] = None
+    return RedirectResponse(get_zoom_auth_url(state))
 
 @app.get("/auth/zoom/callback")
 def zoom_callback(code: str, state: Optional[str] = None):
-    """Mock Zoom callback. In production, exchange code for token."""
-    if state and state in _sessions:
-        user_id = _sessions.pop(state) or "zoom-user-" + secrets.token_hex(4)
-    else:
-        user_id = "zoom-user-" + secrets.token_hex(4)
+    if state and state not in _sessions:
+        raise HTTPException(400, "Invalid OAuth state")
+    if state:
+        _sessions.pop(state, None)
     
-    set_user_profile(user_id, {"name": "User", "email": "user@example.com"})
-    session_token = make_session_token(user_id)
-    
-    response = RedirectResponse("/app")
-    response.set_cookie(SESSION_COOKIE, session_token, httponly=True, samesite="lax", max_age=SESSION_MAX_AGE)
-    return response
+    try:
+        token_data = exchange_zoom_code(code)
+        zoom_user = get_zoom_user(token_data["access_token"])
+        user_id = zoom_user["id"]
+        
+        profile = get_user_profile(user_id) or {}
+        if not profile.get("name"):
+            set_user_profile(user_id, {
+                "name": zoom_user.get("display_name", "User"),
+                "email": zoom_user.get("email", ""),
+                "zoom_user_id": user_id,
+            })
+        
+        session_token = make_session_token(user_id)
+        response = RedirectResponse("/app")
+        response.set_cookie(SESSION_COOKIE, session_token, httponly=True, samesite="lax", max_age=SESSION_MAX_AGE)
+        return response
+    except Exception as e:
+        logger.error(f"Zoom OAuth failed: {e}")
+        raise HTTPException(400, f"Zoom authentication failed: {str(e)}")
 
 @app.get("/api/me")
 def get_me(mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
     profile = get_user_profile(user_id) or {}
     user_data = get_user(user_id) or {}
+    
     return {
         "user_id": user_id,
         "profile": profile,
@@ -211,104 +192,115 @@ def get_me(mp_session: Optional[str] = Cookie(None)):
 def save_profile(profile: ProfileData, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
     set_user_profile(user_id, profile.dict())
+    logger.info(f"Saved profile for {user_id}")
     return {"status": "saved"}
 
 @app.get("/api/connect-token")
 def connect_token(mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
-    return {"connect_token": make_connect_token(user_id), "expires_in": CONNECT_TOKEN_MAX_AGE}
+    token = make_connect_token(user_id)
+    return {"connect_token": token, "expires_in": CONNECT_TOKEN_MAX_AGE}
 
-# Mock Google OAuth
+# Google OAuth
 @app.get("/auth/google/login")
 def google_login(write: bool = False, connect_token: Optional[str] = None, mp_session: Optional[str] = Cookie(None)):
-    user_id = None
-    if mp_session:
-        uid = read_session_token(mp_session)
-        if uid:
-            user_id = uid
-    if not user_id and connect_token:
-        uid = read_connect_token(connect_token)
-        if uid:
-            user_id = uid
-    if not user_id:
-        return _connect_result_page(False, "Google Calendar", "Not authenticated")
-    
+    user_id = _get_user_id_for_oauth_start(mp_session, connect_token)
+    redirect_uri = settings.GOOGLE_REDIRECT_URI
     state = secrets.token_urlsafe(16)
     _sessions[state] = user_id
-    # In production: redirect to Google OAuth URL
-    return RedirectResponse(f"/auth/google/callback?code=mock-code&state={state}")
+    
+    try:
+        url = google_get_login_url(include_write_scope=write, redirect_uri=redirect_uri, state=state)
+        return RedirectResponse(url)
+    except Exception as e:
+        logger.error(f"Google login failed: {e}")
+        raise HTTPException(400, f"Could not start Google auth: {str(e)}")
 
 @app.get("/auth/google/callback")
-def google_callback(code: str, state: str = ""):
+def google_callback(code: str, state: str = "", write: bool = False):
     user_id = _sessions.pop(state, None)
     if not user_id:
-        return _connect_result_page(False, "Google Calendar", "Invalid session")
-    user_data = get_user(user_id) or {}
-    user_data["google_token"] = {"access_token": "mock-google-token", "expiry": None}
-    set_user(user_id, user_data)
-    return _connect_result_page(True, "Google Calendar")
+        return _connect_result_page(False, "Google Calendar", "Link expired or already used.")
+    
+    try:
+        token_data = google_handle_callback(code, include_write_scope=write, redirect_uri=settings.GOOGLE_REDIRECT_URI)
+        user_data = get_user(user_id) or {}
+        user_data["google_token"] = token_data
+        set_user(user_id, user_data)
+        logger.info(f"Google Calendar connected for {user_id}")
+        return _connect_result_page(True, "Google Calendar")
+    except Exception as e:
+        logger.error(f"Google callback failed: {e}")
+        return _connect_result_page(False, "Google Calendar", str(e))
 
-# Mock Outlook OAuth
+# Outlook OAuth
 @app.get("/auth/outlook/login")
 def outlook_login(write: bool = False, connect_token: Optional[str] = None, mp_session: Optional[str] = Cookie(None)):
-    user_id = None
-    if mp_session:
-        uid = read_session_token(mp_session)
-        if uid:
-            user_id = uid
-    if not user_id and connect_token:
-        uid = read_connect_token(connect_token)
-        if uid:
-            user_id = uid
-    if not user_id:
-        return _connect_result_page(False, "Outlook Calendar", "Not authenticated")
-    
+    user_id = _get_user_id_for_oauth_start(mp_session, connect_token)
+    redirect_uri = settings.MS_REDIRECT_URI
     state = secrets.token_urlsafe(16)
     _sessions[state] = user_id
-    return RedirectResponse(f"/auth/outlook/callback?code=mock-code&state={state}")
+    
+    try:
+        url = outlook_get_login_url(include_write_scope=write, redirect_uri=redirect_uri, state=state)
+        return RedirectResponse(url)
+    except Exception as e:
+        logger.error(f"Outlook login failed: {e}")
+        raise HTTPException(400, f"Could not start Outlook auth: {str(e)}")
 
 @app.get("/auth/outlook/callback")
-def outlook_callback(code: str, state: str = ""):
+def outlook_callback(code: str, state: str = "", write: bool = False):
     user_id = _sessions.pop(state, None)
     if not user_id:
-        return _connect_result_page(False, "Outlook Calendar", "Invalid session")
-    user_data = get_user(user_id) or {}
-    user_data["outlook_token"] = {"access_token": "mock-outlook-token", "expiry": None}
-    set_user(user_id, user_data)
-    return _connect_result_page(True, "Outlook Calendar")
+        return _connect_result_page(False, "Outlook Calendar", "Link expired or already used.")
+    
+    try:
+        token_data = outlook_handle_callback(code, include_write_scope=write, redirect_uri=settings.MS_REDIRECT_URI)
+        user_data = get_user(user_id) or {}
+        user_data["outlook_token"] = token_data
+        set_user(user_id, user_data)
+        logger.info(f"Outlook Calendar connected for {user_id}")
+        return _connect_result_page(True, "Outlook Calendar")
+    except Exception as e:
+        logger.error(f"Outlook callback failed: {e}")
+        return _connect_result_page(False, "Outlook Calendar", str(e))
 
-# ============================================================================
 # Phase 2: Context Prep
-# ============================================================================
-
 @app.get("/api/meetings/upcoming")
 def upcoming_meetings(hours: int = 48, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
-    # Mock meetings for demo
-    now = datetime.utcnow()
-    mock_meetings = [
-        {
-            "meeting_id": "meeting-001",
-            "event_id": "meeting-001",
-            "title": "Q3 Planning",
-            "start": (now + timedelta(hours=2)).isoformat(),
-            "attendees": ["PM", "Engineering Lead"],
-        },
-        {
-            "meeting_id": "meeting-002",
-            "event_id": "meeting-002",
-            "title": "Budget Review",
-            "start": (now + timedelta(hours=24)).isoformat(),
-            "attendees": ["CFO", "Finance Team"],
-        },
-    ]
-    return {"meetings": mock_meetings, "errors": {}}
+    user_data = get_user(user_id) or {}
+    results = []
+    errors = {}
+
+    google_token = user_data.get("google_token")
+    if google_token:
+        try:
+            meetings = google_list_upcoming(google_token, hours)
+            results.extend(meetings if meetings else [])
+        except Exception as e:
+            logger.error(f"Google meetings fetch failed: {e}")
+            errors["google"] = str(e)
+
+    outlook_token = user_data.get("outlook_token")
+    if outlook_token:
+        try:
+            meetings = outlook_list_upcoming(outlook_token, hours)
+            results.extend(meetings if meetings else [])
+        except Exception as e:
+            logger.error(f"Outlook meetings fetch failed: {e}")
+            errors["outlook"] = str(e)
+
+    results.sort(key=lambda m: m.get("start", ""))
+    
+    return {"meetings": results, "errors": errors}
 
 @app.get("/api/meetings/{meeting_id}/context")
 def get_meeting_context(meeting_id: str, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
     contexts = _meeting_contexts.get(user_id, {})
     context = contexts.get(meeting_id)
+    
     if not context:
         return {"meeting_id": meeting_id, "goals": None, "avoid": None}
     return context
@@ -318,13 +310,13 @@ def save_meeting_context(meeting_id: str, context: MeetingContext, mp_session: O
     user_id = _get_user_id(mp_session)
     if user_id not in _meeting_contexts:
         _meeting_contexts[user_id] = {}
+    
     _meeting_contexts[user_id][meeting_id] = context.dict()
+    logger.info(f"Saved context for meeting {meeting_id}")
+    
     return {"status": "saved", "meeting_id": meeting_id}
 
-# ============================================================================
 # Phase 3: Live Execution
-# ============================================================================
-
 @app.post("/api/proxy/start")
 def start_proxy(meeting_id: str, context: Optional[MeetingContext] = None, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
@@ -338,44 +330,58 @@ def start_proxy(meeting_id: str, context: Optional[MeetingContext] = None, mp_se
         else:
             context = MeetingContext(meeting_id=meeting_id, title="Meeting")
     
-    system_prompt = (
-        f"You are {profile.get('name', 'the user')} from {profile.get('company', 'the company')}.\n"
-        f"Meeting: {context.title}\n"
-        f"Goals: {context.goals or 'No specific goals'}\n"
-        f"Avoid: {context.avoid or 'Nothing flagged'}\n"
-        f"Financial cap: {context.financial_cap}\n"
-        f"Timeline cap: {context.timeline_cap}\n"
-        f"Off-limits: {context.off_limits or 'None'}\n\n"
-        f"Attend this meeting, track decisions, flag violations, produce deliverables."
-    )
+    try:
+        system_prompt = build_system_prompt(
+            checklist=None,
+            owner_name=profile.get("name", "the user"),
+            owner_title=profile.get("title", "Professional"),
+            owner_company=profile.get("company", "the company"),
+            owner_style=profile.get("communication_style", "professional"),
+            goals=context.goals or "",
+            avoid=context.avoid or "",
+            must_ask=[],
+            financial_cap=context.financial_cap,
+            timeline_cap=context.timeline_cap,
+            off_limits=context.off_limits or "",
+            formality=context.formality or "professional",
+            directness=context.directness or "balanced",
+            owner_phrases="",
+            flag_everything=False,
+        )
+    except Exception as e:
+        logger.error(f"Prompt building failed: {e}")
+        system_prompt = f"Meeting: {context.title}\nGoals: {context.goals}\nBoundaries: {context.avoid}"
     
     _active_meetings[meeting_id] = {
         "user_id": user_id,
-        "context": context.dict(),
+        "meeting_context": context.dict(),
         "system_prompt": system_prompt,
         "history": [],
         "transcript": [],
     }
     
+    logger.info(f"Proxy started for meeting {meeting_id}")
     return {"status": "agent started", "meeting_id": meeting_id}
 
 @app.post("/api/proxy/transcript/{meeting_id}")
 def inject_transcript(meeting_id: str, turn: TranscriptTurn):
     session = _active_meetings.get(meeting_id)
     if not session:
-        raise HTTPException(400, f"No active proxy for {meeting_id}")
+        raise HTTPException(400, f"No active proxy for meeting {meeting_id}")
     
     session["transcript"].append({"speaker": turn.speaker, "text": turn.text})
     
-    # Mock agent response
-    mock_replies = [
-        "Understood. I'll note that in the decisions log.",
-        "That aligns with our financial constraints.",
-        "I'll flag that for follow-up.",
-        "Got it. Adding to the action items.",
-        "Noted. That's within scope.",
-    ]
-    reply = mock_replies[len(session["transcript"]) % len(mock_replies)]
+    try:
+        reply, updated_history = respond_to_turn(
+            session["system_prompt"],
+            session["history"],
+            turn.speaker,
+            turn.text
+        )
+        session["history"] = updated_history
+    except Exception as e:
+        logger.error(f"Agent response failed: {e}")
+        reply = f"[Processing: {turn.text}]"
     
     return {"reply": reply, "turn_count": len(session["transcript"])}
 
@@ -385,48 +391,46 @@ def end_proxy(meeting_id: str):
     if not session:
         raise HTTPException(400, f"No active meeting {meeting_id}")
     
-    deliverables = json.dumps({
-        "meeting": session["context"]["title"],
-        "transcript_turns": len(session["transcript"]),
-        "decisions": ["Decision 1", "Decision 2"],
-        "actions": ["Action item 1", "Action item 2"],
-        "flagged": ["Flag 1"],
-        "transcript": session["transcript"],
-    }, indent=2)
+    try:
+        deliverables = produce_deliverables(session["system_prompt"], session["history"])
+    except Exception as e:
+        logger.error(f"Deliverables generation failed: {e}")
+        deliverables = f"Error: {str(e)}"
     
-    _active_meetings.pop(meeting_id, None)
-    
-    return {
+    result = {
         "meeting_id": meeting_id,
         "deliverables": deliverables,
         "transcript_turns": len(session["transcript"]),
     }
+    
+    _active_meetings.pop(meeting_id, None)
+    logger.info(f"Proxy ended for meeting {meeting_id}")
+    
+    return result
 
-# ============================================================================
 # UI Delivery
-# ============================================================================
-
 @app.get("/app", response_class=HTMLResponse)
 def zoom_app():
     try:
         with open("static/index.html") as f:
             html = f.read()
     except FileNotFoundError:
-        html = "<h1>App not found. Ensure static/index.html exists.</h1>"
+        html = "<h1>App UI not found.</h1>"
     
     return HTMLResponse(
         content=html,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
     )
 
-# Mount static files if directory exists
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# ============================================================================
-# Entry point
-# ============================================================================
+@app.get("/")
+def root():
+    return RedirectResponse("/app")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

@@ -7,6 +7,9 @@ import sys
 import secrets
 import logging
 import traceback as _traceback
+import base64
+import hashlib
+import time
 from datetime import datetime
 from typing import Optional, List
 
@@ -255,6 +258,62 @@ p {{ font-size:13px; color:#666; line-height:1.5; }}
 <script>setTimeout(function(){{ try {{ window.close(); }} catch(e) {{}} }}, 2500);</script>
 </body></html>"""
     return HTMLResponse(content=html)
+
+def decrypt_zoom_app_context(b64_context: str) -> Optional[dict]:
+    """
+    Decrypt the X-Zoom-App-Context header Zoom sends on every request to the
+    app's Home URL when opened from inside the Zoom client. This is the
+    PRIMARY, zero-redirect way to identify the user — it requires no OAuth
+    dance at all. The OAuth flow below (/auth/zoom/login etc.) is kept only
+    as a fallback for testing this URL directly in a normal browser, where
+    Zoom never sends this header in the first place.
+
+    Format per Zoom's docs (AES-256-GCM, key = SHA256(client_secret)):
+      [ivLen:1][iv][aadLen:2 LE][aad][cipherLen:4 LE][cipherText][tag:16]
+
+    Verified against Zoom's own published test vector — see test_e2e.py.
+    Returns the decoded context dict (with at least "uid"), or None if the
+    header is missing, malformed, or fails to decrypt/verify.
+    """
+    if not b64_context or not settings.ZOOM_CLIENT_SECRET:
+        return None
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        import json as _json
+
+        padded = b64_context
+        missing = len(padded) % 4
+        if missing:
+            padded += "=" * (4 - missing)
+        raw = base64.urlsafe_b64decode(padded)
+
+        iv_length = raw[0]
+        pos = 1
+        iv = raw[pos:pos + iv_length]
+        pos += iv_length
+        aad_length = raw[pos] + (raw[pos + 1] << 8)
+        pos += 2
+        aad = raw[pos:pos + aad_length] if aad_length > 0 else None
+        pos += aad_length
+        cipher_length = (raw[pos] + (raw[pos + 1] << 8) +
+                         (raw[pos + 2] << 16) + (raw[pos + 3] << 24))
+        pos += 4
+        body = raw[pos:pos + cipher_length]
+        tag = raw[pos + cipher_length:pos + cipher_length + 16]
+
+        key = hashlib.sha256(settings.ZOOM_CLIENT_SECRET.encode("utf-8")).digest()
+        plaintext = AESGCM(key).decrypt(iv, body + tag, aad)
+        context = _json.loads(plaintext)
+
+        exp = context.get("exp")
+        if exp and time.time() > float(exp):
+            logger.warning("X-Zoom-App-Context expired")
+            return None
+
+        return context
+    except Exception as e:
+        logger.warning(f"Failed to decrypt X-Zoom-App-Context: {e}")
+        return None
 
 # Routes
 @app.api_route("/health", methods=["GET", "HEAD"])
@@ -569,17 +628,53 @@ def end_proxy(meeting_id: str):
     }
 
 @app.api_route("/app", methods=["GET", "HEAD"], response_class=HTMLResponse)
-def zoom_app():
+def zoom_app(request: _Request, mp_session: Optional[str] = Cookie(None)):
     try:
         with open("static/index.html") as f:
             html = f.read()
     except FileNotFoundError:
         html = "<h1>App UI not found</h1>"
-    
-    return HTMLResponse(
-        content=html,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
-    )
+
+    headers = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    response = HTMLResponse(content=html, headers=headers)
+
+    # If we already have a valid session cookie, nothing to do.
+    if mp_session and read_session_token(mp_session):
+        return response
+
+    # Otherwise, check for Zoom's own context header — present on every
+    # request when the app is opened from inside the Zoom client. If valid,
+    # we can establish a session immediately, with zero redirects, zero
+    # OAuth round-trip, and zero reliance on top-level navigation (which
+    # Zoom's embedded panel does not reliably allow). This is the path that
+    # actually matters for real usage inside Zoom.
+    zoom_context_header = request.headers.get("x-zoom-app-context")
+
+    if not zoom_context_header:
+        logger.info("GET /app: no X-Zoom-App-Context header present "
+                    "(expected if opened directly in a browser tab, not from inside Zoom)")
+        context = None
+    else:
+        logger.info(f"GET /app: X-Zoom-App-Context header present ({len(zoom_context_header)} chars) — attempting decrypt")
+        context = decrypt_zoom_app_context(zoom_context_header)
+        if context is None:
+            logger.warning("GET /app: header was present but decryption FAILED — "
+                           "see the 'Failed to decrypt' warning above for the exact reason "
+                           "(most likely cause: ZOOM_CLIENT_SECRET on Render doesn't match "
+                           "the current Client Secret in the Zoom Marketplace dashboard)")
+        elif not context.get("uid"):
+            logger.warning(f"GET /app: header decrypted successfully but had no 'uid' key. Keys present: {list(context.keys())}")
+
+    if context and context.get("uid"):
+        uid = context["uid"]
+        profile = get_user_profile(uid) or {}
+        if not profile.get("name"):
+            set_user_profile(uid, {"name": profile.get("name", ""), "zoom_user_id": uid})
+        session_token = make_session_token(uid)
+        response.set_cookie(SESSION_COOKIE, session_token, httponly=True, samesite="lax", max_age=SESSION_MAX_AGE)
+        logger.info(f"✓ Session established via X-Zoom-App-Context for uid={uid} — zero redirects needed")
+
+    return response
 
 @app.api_route("/", methods=["GET", "HEAD"])
 def root():
@@ -590,6 +685,15 @@ def startup():
     logger.info("=" * 60)
     logger.info("Application Started Successfully!")
     logger.info(f"Routes available: {len(app.routes)}")
+    secret = settings.ZOOM_CLIENT_SECRET or ""
+    if not secret:
+        logger.warning("⚠ ZOOM_CLIENT_SECRET is EMPTY — X-Zoom-App-Context auto-auth "
+                       "will never work; only the OAuth-redirect fallback will function.")
+    else:
+        masked = secret[:4] + "…" + secret[-4:] if len(secret) > 8 else "(too short to mask)"
+        logger.info(f"✓ ZOOM_CLIENT_SECRET is set ({len(secret)} chars, {masked}) — "
+                    f"confirm this exactly matches the current Client Secret in the "
+                    f"Zoom Marketplace dashboard (regenerating it there invalidates this)")
     logger.info("=" * 60)
 
 if __name__ == "__main__":

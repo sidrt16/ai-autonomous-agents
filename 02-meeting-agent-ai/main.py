@@ -391,27 +391,6 @@ def outlook_callback(code: str, state: str = "", write: bool = False):
         logger.error(f"Outlook callback failed: {e}")
         return _connect_result_page(False, "Outlook Calendar", str(e))
 
-@app.post("/api/meetings/impromptu")
-def create_impromptu_meeting(title: str = "Impromptu Meeting", mp_session: Optional[str] = Cookie(None)):
-    """
-    Create an ad-hoc meeting that has no calendar entry — e.g. someone pings
-    you for an unscheduled call. Returns a meeting_id the same shape as a
-    calendar-derived one, so the rest of the Context Prep / Live Execution
-    flow doesn't need to know the difference.
-    """
-    user_id = _get_user_id(mp_session)
-    meeting_id = f"impromptu-{secrets.token_hex(6)}"
-    meeting = {
-        "meeting_id": meeting_id,
-        "event_id": meeting_id,
-        "source": "impromptu",
-        "title": title,
-        "start": datetime.utcnow().isoformat() + "Z",
-        "attendees": [],
-    }
-    logger.info(f"Impromptu meeting created: {meeting_id} for {user_id}")
-    return meeting
-
 @app.get("/api/meetings/upcoming")
 def upcoming_meetings(hours: int = 48, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)

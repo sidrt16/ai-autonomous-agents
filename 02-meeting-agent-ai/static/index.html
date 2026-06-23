@@ -73,7 +73,9 @@
     <div id="zoom-status" style="font-size:12px;padding:8px;background:#f0f7ff;border-radius:4px;border-left:3px solid #3b5bdb;">
       Initializing...
     </div>
-    <button class="btn btn-primary" id="btn-zoom-signin" onclick="signInWithZoom()" style="display:none;margin-top:8px">Sign in with Zoom</button>
+    <a id="btn-zoom-signin" class="btn btn-primary" href="/auth/zoom/login" target="_blank" rel="noopener noreferrer"
+       style="display:none;margin-top:8px;text-decoration:none;text-align:center;box-sizing:border-box"
+       onclick="onZoomSigninClicked()">Sign in with Zoom</a>
     <button class="btn btn-secondary" id="btn-zoom-refresh" onclick="loadMe()" style="display:none;margin-top:8px">I've signed in — refresh</button>
   </div>
 
@@ -325,12 +327,14 @@ function setZoomStatus(msg, kind = 'info') {
   el.style.background = bg;
 }
 
-function signInWithZoom() {
-  // Same proven pattern as Connect Google/Outlook: Zoom's embedded app
-  // panel blocks plain top-level navigation (window.location.href) entirely,
-  // but does allow opening a new window/tab. Sign-in happens there; once it
-  // completes, the user comes back here and clicks "I've signed in — refresh".
-  window.open('/auth/zoom/login', '_blank');
+function onZoomSigninClicked() {
+  // The actual navigation is handled natively by the <a href target="_blank">
+  // element itself — NOT by this function. This matters: a real anchor click
+  // is treated differently by Zoom's embedded webview sandbox than a
+  // JavaScript-triggered window.open() call, which was observed to silently
+  // do nothing when tested inside the real Zoom client. This handler only
+  // updates the on-screen status; it does not call preventDefault(), so the
+  // native navigation proceeds in parallel.
   document.getElementById('btn-zoom-refresh').style.display = 'block';
   setZoomStatus('Complete sign-in in the new window, then click refresh below', 'info');
   setTimeout(loadMe, 3000); // also try automatically, in case it completes quickly
@@ -651,7 +655,7 @@ window.addEventListener('load', async () => {
 // re-executes this script in a way that affects scoping) — inline handlers
 // always resolve through window, so this guarantees they're reachable.
 window.switchTab = switchTab;
-window.signInWithZoom = signInWithZoom;
+window.onZoomSigninClicked = onZoomSigninClicked;
 window.loadMe = loadMe;
 window.connectGoogle = connectGoogle;
 window.connectOutlook = connectOutlook;

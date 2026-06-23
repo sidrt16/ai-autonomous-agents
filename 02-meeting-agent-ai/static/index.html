@@ -24,19 +24,26 @@
   .btn{width:100%;padding:10px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;border:none;transition:background 0.2s;margin-bottom:8px}
   .btn-primary{background:#3b5bdb;color:#fff}
   .btn-primary:hover{background:#2b49b3}
+  .btn-primary:disabled{background:#a8b8e8;cursor:not-allowed}
   .btn-secondary{background:#e8e8e4;color:#1a1a18}
   .btn-secondary:hover{background:#d8d8d0}
   .btn-small{width:auto;padding:6px 12px;font-size:12px;margin:0;margin-right:8px}
   .error{background:#fdf2f2;border:1px solid #f8b4b4;color:#9b1c1c;padding:10px;border-radius:6px;font-size:12px;margin-bottom:10px;display:none}
   .success{background:#f0fdf4;border:1px solid #22c55e;color:#166534;padding:10px;border-radius:6px;font-size:12px;margin-bottom:10px;display:none}
-  .meeting-item{background:#fff;border:1px solid #e8e8e4;border-radius:6px;padding:10px;margin-bottom:8px;cursor:pointer}
+  .live-banner{background:#fff7ed;border:1px solid #fb923c;color:#9a3412;padding:10px;border-radius:6px;font-size:12px;margin-bottom:10px;display:none}
+  .meeting-item{background:#fff;border:1px solid #e8e8e4;border-radius:6px;padding:10px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px}
   .meeting-item:hover{background:#f8f8f6}
+  .meeting-item.selected{border-color:#3b5bdb;background:#f0f7ff}
+  .meeting-main{flex:1;cursor:pointer}
   .meeting-time{font-size:11px;color:#666}
+  .meeting-context-pill{font-size:10px;color:#166534;background:#f0fdf4;padding:2px 6px;border-radius:8px;display:inline-block;margin-top:4px}
   .transcript-log{background:#fafafa;border:1px solid #e8e8e4;border-radius:6px;height:200px;overflow-y:auto;padding:8px;margin-bottom:8px;font-family:monospace;font-size:11px}
   .transcript-turn{margin-bottom:6px;padding:4px;border-left:2px solid #3b5bdb}
   .transcript-turn.agent{border-left-color:#22c55e}
   .agent-response{color:#166534;font-weight:500}
   .divider{border-top:1px solid #e8e8e4;margin:12px 0}
+  .icon-btn{background:none;border:none;cursor:pointer;font-size:14px;padding:4px 8px;color:#666}
+  .icon-btn:hover{color:#1a1a18}
 </style>
 </head>
 <body>
@@ -61,7 +68,6 @@
   <div id="error-setup" class="error"></div>
   <div id="success-setup" class="success"></div>
 
-  <!-- Zoom Auth Status -->
   <div class="card">
     <span class="label">Zoom Authentication</span>
     <div id="zoom-status" style="font-size:12px;padding:8px;background:#f0f7ff;border-radius:4px;border-left:3px solid #3b5bdb;">
@@ -69,26 +75,24 @@
     </div>
   </div>
 
-  <!-- Calendar Integration -->
   <div class="card">
     <span class="label">Calendar Integration</span>
     <div style="display:flex;gap:8px;margin-bottom:8px">
       <button class="btn btn-secondary btn-small" id="btn-google" onclick="connectGoogle()">Connect Google</button>
       <button class="btn btn-secondary btn-small" id="btn-outlook" onclick="connectOutlook()">Connect Outlook</button>
     </div>
-    <div id="calendar-status" style="font-size:11px;color:#666">Calendars: disconnected</div>
+    <div id="calendar-status" style="font-size:11px;color:#666">Calendars: checking…</div>
   </div>
 
-  <!-- User Profile -->
   <div class="card">
     <span class="label">Your Profile</span>
     <input type="text" id="profile-name" placeholder="Full name">
     <input type="text" id="profile-title" placeholder="Job title">
     <input type="text" id="profile-company" placeholder="Company">
     <select id="profile-style">
-      <option value="professional">Professional & formal</option>
-      <option value="direct">Direct & to the point</option>
-      <option value="collaborative">Collaborative & warm</option>
+      <option value="professional">Professional &amp; formal</option>
+      <option value="direct">Direct &amp; to the point</option>
+      <option value="collaborative">Collaborative &amp; warm</option>
     </select>
     <button class="btn btn-primary" onclick="saveProfile()">Save Profile</button>
   </div>
@@ -107,7 +111,15 @@
   </div>
 
   <div id="meetings-list" style="flex:1;overflow-y:auto">
-    <div style="color:#666;font-size:12px;padding:20px;text-align:center">Loading meetings...</div>
+    <div style="color:#666;font-size:12px;padding:20px;text-align:center">Loading meetings…</div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="card">
+    <span class="label">No meeting on your calendar?</span>
+    <input type="text" id="impromptu-title" placeholder="e.g. Quick sync with Sarah">
+    <button class="btn btn-secondary" onclick="createImpromptuMeeting()">+ Create Impromptu Meeting</button>
   </div>
 </div>
 
@@ -115,13 +127,13 @@
 <div id="context-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;padding:20px;overflow-y:auto">
   <div style="background:#fff;border-radius:8px;padding:20px;max-width:500px;margin:0 auto;margin-top:40px">
     <h3 id="modal-title" style="font-size:14px;font-weight:600;margin-bottom:12px">Set Context</h3>
-    
+
     <label class="label">Goals for this meeting</label>
     <textarea id="modal-goals" placeholder="What do you want to achieve?" rows="2"></textarea>
-    
+
     <label class="label">What to avoid</label>
     <textarea id="modal-avoid" placeholder="Don't commit to..." rows="2"></textarea>
-    
+
     <div style="display:flex;gap:8px;margin-bottom:8px">
       <div style="flex:1">
         <label class="label">Financial cap</label>
@@ -132,10 +144,10 @@
         <input type="text" id="modal-timeline" value="1 week">
       </div>
     </div>
-    
+
     <label class="label">Off-limits topics</label>
     <textarea id="modal-offlimits" placeholder="Internal data, unreleased features..." rows="2"></textarea>
-    
+
     <div style="display:flex;gap:8px">
       <button class="btn btn-primary" onclick="saveContextAndClose()">Save Context</button>
       <button class="btn btn-secondary" onclick="closeContextModal()">Cancel</button>
@@ -147,13 +159,14 @@
 <div class="screen" id="screen-exec">
   <div id="error-exec" class="error"></div>
   <div id="success-exec" class="success"></div>
+  <div id="live-banner" class="live-banner"></div>
 
   <div class="card">
-    <span class="label">Active Meeting</span>
-    <div style="margin-bottom:8px">
-      <div id="exec-meeting-title" style="font-size:13px;font-weight:600">No meeting active</div>
-      <div id="exec-meeting-context" style="font-size:11px;color:#666;margin-top:4px"></div>
-    </div>
+    <span class="label">Select Meeting to Run</span>
+    <select id="exec-meeting-select" onchange="onSelectExecMeeting()">
+      <option value="">— Choose a meeting —</option>
+    </select>
+    <div id="exec-meeting-context" style="font-size:11px;color:#666;margin-top:4px"></div>
   </div>
 
   <div class="card">
@@ -161,19 +174,21 @@
     <div class="transcript-log" id="transcript-display"></div>
     <div style="display:flex;gap:6px">
       <input type="text" id="speaker-name" value="You" style="width:80px;margin-bottom:0">
-      <input type="text" id="transcript-input" placeholder="What was said?" style="flex:1;margin-bottom:0">
+      <input type="text" id="transcript-input" placeholder="What was said?" style="flex:1;margin-bottom:0" disabled>
     </div>
-    <button class="btn btn-primary" onclick="injectTranscript()">Add Turn</button>
+    <button class="btn btn-primary" id="btn-inject" onclick="injectTranscript()" disabled>Add Turn</button>
   </div>
 
   <div style="display:flex;gap:8px">
-    <button class="btn btn-primary" id="btn-start-meeting" onclick="startMeeting()">Start Agent</button>
-    <button class="btn btn-secondary" id="btn-end-meeting" onclick="endMeeting()" style="display:none">End & Extract</button>
+    <button class="btn btn-primary" id="btn-start-meeting" onclick="startMeeting()" disabled>Start Agent</button>
+    <button class="btn btn-secondary" id="btn-end-meeting" onclick="endMeeting()" style="display:none">End &amp; Extract</button>
   </div>
 </div>
 
 <!-- ===== PHASE 4: RESULTS ===== -->
 <div class="screen" id="screen-results">
+  <div id="error-results" class="error"></div>
+  <div id="success-results" class="success"></div>
   <div class="card">
     <span class="label">Meeting Deliverables</span>
     <textarea id="deliverables-box" style="height:300px;font-family:monospace;font-size:11px" readonly placeholder="Deliverables will appear here..."></textarea>
@@ -183,13 +198,16 @@
 <script>
 const API = '/api';
 let currentUser = null;
-let currentMeeting = null;
+let allMeetings = [];           // last fetched calendar meetings, cached in memory
+let savedContexts = {};         // meeting_id -> context, cached client-side once loaded/saved
 let contextEditorMeeting = null;
+let currentMeeting = null;      // meeting_id selected for Live Execution
+let zoomMeetingContext = null;  // populated by zoomSdk.getMeetingContext() if available
 
-async function api(path, opts={}) {
-  const r = await fetch(API + path, {credentials:'include', ...opts});
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, { credentials: 'include', ...opts });
   if (!r.ok) {
-    const e = await r.json().catch(()=>({detail: r.statusText}));
+    const e = await r.json().catch(() => ({ detail: r.statusText }));
     const err = new Error(e.detail || r.statusText);
     err.status = r.status;
     throw err;
@@ -197,7 +215,7 @@ async function api(path, opts={}) {
   return r.json();
 }
 
-function showError(msg, section='setup') {
+function showError(msg, section = 'setup') {
   const el = document.getElementById(`error-${section}`);
   if (el) {
     el.textContent = msg;
@@ -206,7 +224,7 @@ function showError(msg, section='setup') {
   }
 }
 
-function showSuccess(msg, section='setup') {
+function showSuccess(msg, section = 'setup') {
   const el = document.getElementById(`success-${section}`);
   if (el) {
     el.textContent = msg;
@@ -220,17 +238,72 @@ function switchTab(tab) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(`tab-${tab}`).classList.add('active');
   document.getElementById(`screen-${tab}`).classList.add('active');
-  
-  const badges = {'setup':'Setup','prep':'Context Prep','exec':'Live','results':'Results'};
+
+  const badges = { setup: 'Setup', prep: 'Context Prep', exec: 'Live', results: 'Results' };
   document.getElementById('status-badge').textContent = badges[tab] || 'Setup';
+
+  if (tab === 'exec') populateExecMeetingSelect();
 }
 
+// ---------------------------------------------------------------------------
+// Zoom SDK — detect whether we're actually inside a live Zoom meeting right
+// now. If so, surface a banner offering to auto-start the agent for it
+// (covers the "agent should start itself for an impromptu/unscheduled call"
+// requirement, without needing a calendar entry at all).
+// ---------------------------------------------------------------------------
+async function detectActiveZoomMeeting() {
+  try {
+    if (typeof zoomSdk === 'undefined') return;
+    await zoomSdk.config({ capabilities: ['getMeetingContext', 'getRunningContext'] });
+    const running = await zoomSdk.getRunningContext().catch(() => null);
+    if (running && running.context && running.context !== 'inMeeting') {
+      return; // not currently in a live meeting (e.g. just browsing the app panel)
+    }
+    const ctx = await zoomSdk.getMeetingContext();
+    if (ctx && ctx.meetingID) {
+      zoomMeetingContext = {
+        meeting_id: `zoom-live-${ctx.meetingID}`,
+        title: ctx.meetingTopic || 'Current Zoom Meeting',
+        source: 'zoom-live',
+        start: new Date().toISOString(),
+        attendees: [],
+      };
+      const banner = document.getElementById('live-banner');
+      banner.innerHTML = `🔴 You're in a live meeting: <strong>${zoomMeetingContext.title}</strong> — `
+        + `<a href="#" onclick="useZoomLiveMeeting();return false;" style="color:#9a3412;font-weight:600;">start the agent for it →</a>`;
+      banner.style.display = 'block';
+    }
+  } catch (err) {
+    // Not every Zoom client/version supports these capabilities — fail silently,
+    // this is a convenience enhancement, not a requirement for the app to work.
+    console.warn('Zoom meeting-context detection unavailable:', err);
+  }
+}
+
+function useZoomLiveMeeting() {
+  if (!zoomMeetingContext) return;
+  if (!allMeetings.find(m => m.meeting_id === zoomMeetingContext.meeting_id)) {
+    allMeetings.unshift(zoomMeetingContext);
+  }
+  switchTab('exec');
+  document.getElementById('exec-meeting-select').value = zoomMeetingContext.meeting_id;
+  onSelectExecMeeting();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1: Setup
+// ---------------------------------------------------------------------------
 async function loadMe() {
   try {
     currentUser = await api('/me');
     updateZoomStatus();
     updateCalendarStatus();
-  } catch(e) {
+    const p = currentUser.profile || {};
+    if (p.name) document.getElementById('profile-name').value = p.name;
+    if (p.title) document.getElementById('profile-title').value = p.title;
+    if (p.company) document.getElementById('profile-company').value = p.company;
+    if (p.communication_style) document.getElementById('profile-style').value = p.communication_style;
+  } catch (e) {
     if (e.status === 401) {
       window.location.href = '/auth/zoom/login';
     } else {
@@ -251,7 +324,7 @@ function updateZoomStatus() {
 function updateCalendarStatus() {
   const google = currentUser.google_connected;
   const outlook = currentUser.outlook_connected;
-  const status = `${google?'✓ Google':'Google'} · ${outlook?'✓ Outlook':'Outlook'}`;
+  const status = `${google ? '✓ Google' : 'Google'} · ${outlook ? '✓ Outlook' : 'Outlook'}`;
   document.getElementById('calendar-status').textContent = `Calendars: ${status}`;
   document.getElementById('btn-google').textContent = google ? '✓ Google Connected' : 'Connect Google';
   document.getElementById('btn-outlook').textContent = outlook ? '✓ Outlook Connected' : 'Connect Outlook';
@@ -263,7 +336,7 @@ async function connectGoogle() {
     const url = `/auth/google/login?write=true&connect_token=${encodeURIComponent(tok.connect_token)}`;
     window.open(url, '_blank');
     setTimeout(loadMe, 2500);
-  } catch(e) {
+  } catch (e) {
     showError('Could not start Google connection: ' + e.message, 'setup');
   }
 }
@@ -274,7 +347,7 @@ async function connectOutlook() {
     const url = `/auth/outlook/login?connect_token=${encodeURIComponent(tok.connect_token)}`;
     window.open(url, '_blank');
     setTimeout(loadMe, 2500);
-  } catch(e) {
+  } catch (e) {
     showError('Could not start Outlook connection: ' + e.message, 'setup');
   }
 }
@@ -283,51 +356,101 @@ async function saveProfile() {
   try {
     await api('/profile', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: document.getElementById('profile-name').value,
         title: document.getElementById('profile-title').value,
         company: document.getElementById('profile-company').value,
         communication_style: document.getElementById('profile-style').value,
-      })
+      }),
     });
     showSuccess('Profile saved', 'setup');
     loadMe();
-  } catch(e) {
+  } catch (e) {
     showError('Failed to save: ' + e.message, 'setup');
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 2: Context Prep
+// ---------------------------------------------------------------------------
 async function loadUpcomingMeetings() {
   try {
     const data = await api('/meetings/upcoming?hours=48');
-    const meetings = data.meetings || [];
-    const list = document.getElementById('meetings-list');
-    
-    if (!meetings.length) {
-      list.innerHTML = '<div style="padding:20px;text-align:center;color:#666">No upcoming meetings</div>';
-      return;
+    allMeetings = data.meetings || [];
+    renderMeetingsList();
+    if (data.errors && Object.keys(data.errors).length) {
+      const msgs = Object.entries(data.errors).map(([k, v]) => `${k}: ${v}`).join(' · ');
+      showError(`Some calendars had issues — ${msgs}`, 'prep');
     }
-    
-    list.innerHTML = meetings.map(m => `
-      <div class="meeting-item" onclick="editContext('${m.meeting_id || m.event_id}', '${m.title}')">
-        <div style="font-weight:500">${m.title}</div>
-        <div class="meeting-time">${new Date(m.start).toLocaleString()}</div>
-        <div style="font-size:11px;color:#999;margin-top:4px">Click to set context →</div>
-      </div>
-    `).join('');
-  } catch(e) {
+  } catch (e) {
     showError('Failed to load meetings: ' + e.message, 'prep');
   }
 }
 
-function editContext(meeting_id, title) {
-  contextEditorMeeting = meeting_id;
-  document.getElementById('modal-title').textContent = `Set context: ${title}`;
+function renderMeetingsList() {
+  const list = document.getElementById('meetings-list');
+  if (!allMeetings.length) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:#666">No upcoming meetings — connect a calendar or add one below.</div>';
+    return;
+  }
+  list.innerHTML = allMeetings.map(m => {
+    const id = m.meeting_id || m.event_id;
+    const hasContext = !!savedContexts[id];
+    return `
+      <div class="meeting-item">
+        <div class="meeting-main" onclick="editContext('${id}')">
+          <div style="font-weight:500">${m.title}</div>
+          <div class="meeting-time">${m.start ? new Date(m.start).toLocaleString() : 'No time set'}</div>
+          ${hasContext ? '<span class="meeting-context-pill">Context set ✓</span>' : ''}
+        </div>
+        <button class="icon-btn" title="Set context" onclick="editContext('${id}')">✏️</button>
+        <button class="icon-btn" title="Run live now" onclick="sendToLive('${id}')">▶</button>
+      </div>
+    `;
+  }).join('');
+}
+
+async function createImpromptuMeeting() {
+  const title = document.getElementById('impromptu-title').value.trim() || 'Impromptu Meeting';
+  try {
+    const meeting = await api(`/meetings/impromptu?title=${encodeURIComponent(title)}`, { method: 'POST' });
+    allMeetings.unshift(meeting);
+    renderMeetingsList();
+    document.getElementById('impromptu-title').value = '';
+    showSuccess(`Created "${title}" — set its context or run it live`, 'prep');
+  } catch (e) {
+    showError('Could not create impromptu meeting: ' + e.message, 'prep');
+  }
+}
+
+function findMeeting(id) {
+  return allMeetings.find(m => (m.meeting_id || m.event_id) === id);
+}
+
+async function editContext(meetingId) {
+  contextEditorMeeting = meetingId;
+  const meeting = findMeeting(meetingId);
+  document.getElementById('modal-title').textContent = `Set context: ${meeting ? meeting.title : meetingId}`;
+
+  // Load any previously saved context so reopening doesn't blank the form
+  let existing = savedContexts[meetingId];
+  if (!existing) {
+    try {
+      existing = await api(`/meetings/${encodeURIComponent(meetingId)}/context`);
+      if (existing && existing.goals !== undefined) savedContexts[meetingId] = existing;
+    } catch (e) {
+      existing = null;
+    }
+  }
+
+  document.getElementById('modal-goals').value = (existing && existing.goals) || '';
+  document.getElementById('modal-avoid').value = (existing && existing.avoid) || '';
+  document.getElementById('modal-financial').value = (existing && existing.financial_cap) || '$0 — flag all';
+  document.getElementById('modal-timeline').value = (existing && existing.timeline_cap) || '1 week';
+  document.getElementById('modal-offlimits').value = (existing && existing.off_limits) || '';
+
   document.getElementById('context-modal').style.display = 'block';
-  // Could load saved context here
-  document.getElementById('modal-goals').value = '';
-  document.getElementById('modal-avoid').value = '';
 }
 
 function closeContextModal() {
@@ -335,24 +458,73 @@ function closeContextModal() {
 }
 
 async function saveContextAndClose() {
+  const meeting = findMeeting(contextEditorMeeting) || {};
+  const payload = {
+    meeting_id: contextEditorMeeting,
+    title: meeting.title || 'Meeting',
+    source: meeting.source || null,
+    start: meeting.start || null,
+    attendees: (meeting.attendees || []).map(a => ({
+      name: a.name || null,
+      email: a.email || null,
+      response_status: a.response_status || null,
+    })),
+    goals: document.getElementById('modal-goals').value,
+    avoid: document.getElementById('modal-avoid').value,
+    financial_cap: document.getElementById('modal-financial').value,
+    timeline_cap: document.getElementById('modal-timeline').value,
+    off_limits: document.getElementById('modal-offlimits').value,
+  };
   try {
-    await api(`/meetings/${contextEditorMeeting}/context`, {
+    await api(`/meetings/${encodeURIComponent(contextEditorMeeting)}/context`, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        meeting_id: contextEditorMeeting,
-        goals: document.getElementById('modal-goals').value,
-        avoid: document.getElementById('modal-avoid').value,
-        financial_cap: document.getElementById('modal-financial').value,
-        timeline_cap: document.getElementById('modal-timeline').value,
-        off_limits: document.getElementById('modal-offlimits').value,
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     });
+    savedContexts[contextEditorMeeting] = payload;
     showSuccess('Context saved', 'prep');
     closeContextModal();
-  } catch(e) {
+    renderMeetingsList();
+  } catch (e) {
     showError('Failed to save context: ' + e.message, 'prep');
   }
+}
+
+function sendToLive(meetingId) {
+  switchTab('exec');
+  populateExecMeetingSelect();
+  document.getElementById('exec-meeting-select').value = meetingId;
+  onSelectExecMeeting();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Live Execution
+// ---------------------------------------------------------------------------
+function populateExecMeetingSelect() {
+  const sel = document.getElementById('exec-meeting-select');
+  const prevValue = sel.value;
+  sel.innerHTML = '<option value="">— Choose a meeting —</option>' + allMeetings.map(m => {
+    const id = m.meeting_id || m.event_id;
+    return `<option value="${id}">${m.title}${m.start ? ' — ' + new Date(m.start).toLocaleString() : ''}</option>`;
+  }).join('');
+  if (prevValue && findMeeting(prevValue)) sel.value = prevValue;
+}
+
+function onSelectExecMeeting() {
+  const id = document.getElementById('exec-meeting-select').value;
+  currentMeeting = id || null;
+  const meeting = id ? findMeeting(id) : null;
+  const ctx = id ? savedContexts[id] : null;
+
+  const ctxDiv = document.getElementById('exec-meeting-context');
+  if (meeting) {
+    const goalsLine = ctx && ctx.goals ? `Goals: ${ctx.goals}` : 'No context set yet — agent will run with defaults.';
+    ctxDiv.textContent = goalsLine;
+  } else {
+    ctxDiv.textContent = '';
+  }
+
+  document.getElementById('btn-start-meeting').disabled = !currentMeeting;
 }
 
 async function startMeeting() {
@@ -361,70 +533,75 @@ async function startMeeting() {
     return;
   }
   try {
-    await api(`/proxy/start?meeting_id=${currentMeeting}`, {method:'POST'});
+    const res = await api(`/proxy/start?meeting_id=${encodeURIComponent(currentMeeting)}`, { method: 'POST' });
     document.getElementById('btn-start-meeting').style.display = 'none';
     document.getElementById('btn-end-meeting').style.display = 'block';
-    document.getElementById('transcript-display').innerHTML = '[Agent initialized]\n';
+    document.getElementById('transcript-input').disabled = false;
+    document.getElementById('btn-inject').disabled = false;
+    document.getElementById('exec-meeting-select').disabled = true;
+    document.getElementById('transcript-display').innerHTML = `[Agent initialized for "${res.title || currentMeeting}"]\n`;
     showSuccess('Agent started', 'exec');
-  } catch(e) {
+  } catch (e) {
     showError('Failed to start: ' + e.message, 'exec');
   }
 }
 
 async function injectTranscript() {
+  if (!currentMeeting) return;
   const speaker = document.getElementById('speaker-name').value || 'Speaker';
   const text = document.getElementById('transcript-input').value;
   if (!text) return;
-  
+
   try {
-    const data = await api(`/proxy/transcript/${currentMeeting}`, {
+    const data = await api(`/proxy/transcript/${encodeURIComponent(currentMeeting)}`, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({speaker, text})
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ speaker, text }),
     });
-    
+
     const log = document.getElementById('transcript-display');
     log.innerHTML += `<div class="transcript-turn">[${speaker}]: ${text}</div>`;
-    log.innerHTML += `<div class="transcript-turn agent"><span class="agent-response">→ Agent: ${data.reply}</span></div>`;
+    if (data.reply) {
+      log.innerHTML += `<div class="transcript-turn agent"><span class="agent-response">→ Agent: ${data.reply}</span></div>`;
+    }
     log.scrollTop = log.scrollHeight;
-    
     document.getElementById('transcript-input').value = '';
-  } catch(e) {
+  } catch (e) {
     showError('Failed to inject: ' + e.message, 'exec');
   }
 }
 
 async function endMeeting() {
+  if (!currentMeeting) return;
   try {
-    const data = await api(`/proxy/end/${currentMeeting}`, {method:'POST'});
+    const data = await api(`/proxy/end/${encodeURIComponent(currentMeeting)}`, { method: 'POST' });
     document.getElementById('deliverables-box').value = data.deliverables || JSON.stringify(data, null, 2);
     document.getElementById('btn-start-meeting').style.display = 'block';
+    document.getElementById('btn-start-meeting').disabled = false;
     document.getElementById('btn-end-meeting').style.display = 'none';
+    document.getElementById('transcript-input').disabled = true;
+    document.getElementById('btn-inject').disabled = true;
+    document.getElementById('exec-meeting-select').disabled = false;
     currentMeeting = null;
     switchTab('results');
     showSuccess('Meeting concluded', 'results');
-  } catch(e) {
+  } catch (e) {
     showError('Failed to end: ' + e.message, 'exec');
   }
 }
 
+document.getElementById('transcript-input').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') injectTranscript();
+});
+
+// ---------------------------------------------------------------------------
 // Initialize
+// ---------------------------------------------------------------------------
 window.addEventListener('load', async () => {
   await loadMe();
   await loadUpcomingMeetings();
-  
-  // Demo: allow starting a meeting from prep tab
-  document.getElementById('meetings-list').addEventListener('click', (e) => {
-    if (e.target.closest('.meeting-item')) {
-      const item = e.target.closest('.meeting-item');
-      const title = item.querySelector('div').textContent;
-      // Could set currentMeeting here for demo
-    }
-  });
-});
-
-document.getElementById('transcript-input')?.addEventListener('keypress', (e) => {
-  if (e.key === 'Enter') injectTranscript();
+  populateExecMeetingSelect();
+  detectActiveZoomMeeting();
 });
 </script>
 </body>

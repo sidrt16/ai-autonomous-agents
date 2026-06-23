@@ -113,14 +113,6 @@
   <div id="meetings-list" style="flex:1;overflow-y:auto">
     <div style="color:#666;font-size:12px;padding:20px;text-align:center">Loading meetings…</div>
   </div>
-
-  <div class="divider"></div>
-
-  <div class="card">
-    <span class="label">No meeting on your calendar?</span>
-    <input type="text" id="impromptu-title" placeholder="e.g. Quick sync with Sarah">
-    <button class="btn btn-secondary" onclick="createImpromptuMeeting()">+ Create Impromptu Meeting</button>
-  </div>
 </div>
 
 <!-- Meeting Context Editor Modal -->
@@ -452,19 +444,6 @@ function renderMeetingsList() {
   }).join('');
 }
 
-async function createImpromptuMeeting() {
-  const title = document.getElementById('impromptu-title').value.trim() || 'Impromptu Meeting';
-  try {
-    const meeting = await api(`/meetings/impromptu?title=${encodeURIComponent(title)}`, { method: 'POST' });
-    allMeetings.unshift(meeting);
-    renderMeetingsList();
-    document.getElementById('impromptu-title').value = '';
-    showSuccess(`Created "${title}" — set its context or run it live`, 'prep');
-  } catch (e) {
-    showError('Could not create impromptu meeting: ' + e.message, 'prep');
-  }
-}
-
 function findMeeting(id) {
   return allMeetings.find(m => (m.meeting_id || m.event_id) === id);
 }
@@ -644,6 +623,26 @@ window.addEventListener('load', async () => {
   populateExecMeetingSelect();
   detectActiveZoomMeeting();
 });
+
+// Explicitly export every function referenced by an inline onclick/onchange
+// HTML attribute. Function declarations are global by default, but this
+// removes any ambiguity (e.g. if Zoom's embedded webview ever wraps or
+// re-executes this script in a way that affects scoping) — inline handlers
+// always resolve through window, so this guarantees they're reachable.
+window.switchTab = switchTab;
+window.connectGoogle = connectGoogle;
+window.connectOutlook = connectOutlook;
+window.saveProfile = saveProfile;
+window.loadUpcomingMeetings = loadUpcomingMeetings;
+window.editContext = editContext;
+window.closeContextModal = closeContextModal;
+window.saveContextAndClose = saveContextAndClose;
+window.sendToLive = sendToLive;
+window.onSelectExecMeeting = onSelectExecMeeting;
+window.startMeeting = startMeeting;
+window.injectTranscript = injectTranscript;
+window.endMeeting = endMeeting;
+window.useZoomLiveMeeting = useZoomLiveMeeting;
 </script>
 </body>
 </html>

@@ -73,6 +73,7 @@
     <div id="zoom-status" style="font-size:12px;padding:8px;background:#f0f7ff;border-radius:4px;border-left:3px solid #3b5bdb;">
       Initializing...
     </div>
+    <button class="btn btn-primary" id="btn-zoom-signin" onclick="window.location.href='/auth/zoom/login'" style="display:none;margin-top:8px">Sign in with Zoom</button>
   </div>
 
   <div class="card">
@@ -336,8 +337,14 @@ async function loadMe() {
     if (p.communication_style) document.getElementById('profile-style').value = p.communication_style;
   } catch (e) {
     if (e.status === 401) {
-      setZoomStatus('No active session — redirecting to Zoom sign-in…', 'info');
-      setTimeout(() => { window.location.href = '/auth/zoom/login'; }, 600);
+      // IMPORTANT: do NOT auto-redirect here. Zoom's embedded app panel only
+      // allows top-level navigation as a direct, synchronous result of a
+      // real user click — a programmatic redirect fired from page-load code
+      // (even via setTimeout) gets silently dropped, leaving the panel stuck
+      // forever with no error and no navigation. Show a real button instead
+      // so the navigation is a genuine user gesture.
+      setZoomStatus('Not signed in yet', 'info');
+      document.getElementById('btn-zoom-signin').style.display = 'block';
     } else if (e.status === 0) {
       setZoomStatus('⚠ ' + e.message, 'error');
       showError(e.message, 'setup');
@@ -351,6 +358,7 @@ async function loadMe() {
 function updateZoomStatus() {
   if (currentUser) {
     setZoomStatus(`✓ Authenticated as ${currentUser.profile?.name || 'User'}`, 'success');
+    document.getElementById('btn-zoom-signin').style.display = 'none';
   }
 }
 

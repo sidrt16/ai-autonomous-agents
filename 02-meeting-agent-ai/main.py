@@ -6,7 +6,9 @@ import os
 import sys
 import secrets
 import logging
-from typing import Optional
+import traceback as _traceback
+from datetime import datetime
+from typing import Optional, List
 
 # Configure logging FIRST
 logging.basicConfig(
@@ -32,9 +34,10 @@ if not os.path.exists("static/index.html"):
 # Now import FastAPI
 try:
     from fastapi import FastAPI, HTTPException, Cookie
-    from fastapi.responses import RedirectResponse, HTMLResponse
+    from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.middleware.cors import CORSMiddleware
+    from starlette.requests import Request as _Request
     from pydantic import BaseModel
     logger.info("✓ FastAPI imported")
 except Exception as e:
@@ -103,6 +106,13 @@ except Exception as e:
     logger.error(f"✗ prompt_builder import failed: {e}")
     raise
 
+try:
+    from schemas import ChecklistPayload, Attendee as SchemaAttendee
+    logger.info("✓ schemas (ChecklistPayload, Attendee) imported")
+except Exception as e:
+    logger.error(f"✗ schemas import failed: {e}")
+    raise
+
 logger.info("=" * 60)
 logger.info("All modules imported successfully!")
 logger.info("=" * 60)
@@ -126,15 +136,41 @@ if os.path.exists("static"):
     except Exception as e:
         logger.warning(f"Could not mount static files: {e}")
 
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: _Request, exc: Exception):
+    """
+    Last-resort safety net. Any exception NOT already caught and handled
+    inside a route (i.e. a genuine bug) lands here instead of producing a
+    bare 500 with no body / crashing the worker. Full traceback goes to
+    the Render log; the client gets a clean, structured JSON error.
+    """
+    logger.error(f"UNHANDLED EXCEPTION on {request.method} {request.url.path}: {exc}")
+    logger.error(_traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"Internal error: {type(exc).__name__}: {str(exc)}",
+            "path": str(request.url.path),
+        },
+    )
+
 # Runtime state
 _sessions = {}
 _meeting_contexts = {}
 _active_meetings = {}
 
 # Models
+class AttendeeIn(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    response_status: Optional[str] = None
+
 class MeetingContext(BaseModel):
     meeting_id: str
     title: Optional[str] = None
+    source: Optional[str] = None          # "google" | "outlook" | "impromptu"
+    start: Optional[str] = None           # ISO timestamp, used as date_time in the prompt
+    attendees: Optional[List[AttendeeIn]] = []
     goals: Optional[str] = None
     avoid: Optional[str] = None
     financial_cap: Optional[str] = "$0 — flag all"
@@ -196,7 +232,7 @@ p {{ font-size:13px; color:#666; line-height:1.5; }}
     return HTMLResponse(content=html)
 
 # Routes
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     return {"status": "ok", "version": "1.0.0"}
 
@@ -330,6 +366,27 @@ def outlook_callback(code: str, state: str = "", write: bool = False):
         logger.error(f"Outlook callback failed: {e}")
         return _connect_result_page(False, "Outlook Calendar", str(e))
 
+@app.post("/api/meetings/impromptu")
+def create_impromptu_meeting(title: str = "Impromptu Meeting", mp_session: Optional[str] = Cookie(None)):
+    """
+    Create an ad-hoc meeting that has no calendar entry — e.g. someone pings
+    you for an unscheduled call. Returns a meeting_id the same shape as a
+    calendar-derived one, so the rest of the Context Prep / Live Execution
+    flow doesn't need to know the difference.
+    """
+    user_id = _get_user_id(mp_session)
+    meeting_id = f"impromptu-{secrets.token_hex(6)}"
+    meeting = {
+        "meeting_id": meeting_id,
+        "event_id": meeting_id,
+        "source": "impromptu",
+        "title": title,
+        "start": datetime.utcnow().isoformat() + "Z",
+        "attendees": [],
+    }
+    logger.info(f"Impromptu meeting created: {meeting_id} for {user_id}")
+    return meeting
+
 @app.get("/api/meetings/upcoming")
 def upcoming_meetings(hours: int = 48, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
@@ -398,29 +455,60 @@ def start_proxy(meeting_id: str, context: Optional[MeetingContext] = None, mp_se
         if context_dict:
             context = MeetingContext(**context_dict)
         else:
-            context = MeetingContext(meeting_id=meeting_id, title="Meeting")
+            context = MeetingContext(meeting_id=meeting_id, title="Impromptu Meeting", source="impromptu")
     
+    # Build a real ChecklistPayload from whatever meeting metadata we have.
+    # Attendees/start/title come from the saved context (carried through from
+    # the calendar list when the user set context); falls back sanely for
+    # impromptu meetings with no calendar entry at all.
     try:
+        attendees = [
+            SchemaAttendee(
+                name=a.name,
+                email=a.email or "unknown@unknown",
+                response_status=a.response_status,
+            )
+            for a in (context.attendees or [])
+        ]
+        checklist = ChecklistPayload(
+            meeting_name=context.title or "Meeting",
+            date_time=context.start or "Not scheduled (impromptu)",
+            attendees=attendees,
+            agenda_from_invite=None,
+            agenda_missing=True,
+            matched_template=None,
+            needs_manual_input=[],
+        )
         system_prompt = build_system_prompt(
-            checklist=None,
-            owner_name=profile.get("name", "the user"),
-            owner_title=profile.get("title", "Professional"),
-            owner_company=profile.get("company", "the company"),
-            owner_style=profile.get("communication_style", "professional"),
+            checklist=checklist,
+            owner_name=profile.get("name") or "the user",
+            owner_title=profile.get("title") or "Professional",
+            owner_company=profile.get("company") or "the company",
+            owner_style=profile.get("communication_style") or "professional",
             goals=context.goals or "",
             avoid=context.avoid or "",
             must_ask=[],
-            financial_cap=context.financial_cap,
-            timeline_cap=context.timeline_cap,
+            financial_cap=context.financial_cap or "$0 — flag all",
+            timeline_cap=context.timeline_cap or "1 week",
             off_limits=context.off_limits or "",
             formality=context.formality or "professional",
             directness=context.directness or "balanced",
             owner_phrases="",
             flag_everything=False,
         )
+        logger.info(f"Real system prompt built for {meeting_id} ({len(system_prompt)} chars)")
     except Exception as e:
-        logger.error(f"Prompt build failed: {e}")
-        system_prompt = f"Meeting: {context.title}"
+        # Should not happen given the construction above, but never let a
+        # malformed prompt take down meeting start — fall back to a minimal
+        # but still usable prompt instead of a 500.
+        logger.error(f"Prompt build failed, using fallback: {e}")
+        system_prompt = (
+            f"You are attending '{context.title}' as a stand-in for {profile.get('name', 'the user')}.\n"
+            f"Goals: {context.goals or 'none specified'}\n"
+            f"Avoid: {context.avoid or 'none specified'}\n"
+            f"Financial cap: {context.financial_cap}\nTimeline cap: {context.timeline_cap}\n"
+            f"Off-limits: {context.off_limits or 'none'}\n"
+        )
     
     _active_meetings[meeting_id] = {
         "user_id": user_id,
@@ -431,7 +519,7 @@ def start_proxy(meeting_id: str, context: Optional[MeetingContext] = None, mp_se
     }
     
     logger.info(f"Proxy started for {meeting_id}")
-    return {"status": "agent started", "meeting_id": meeting_id}
+    return {"status": "agent started", "meeting_id": meeting_id, "title": context.title}
 
 @app.post("/api/proxy/transcript/{meeting_id}")
 def inject_transcript(meeting_id: str, turn: TranscriptTurn):
@@ -476,7 +564,7 @@ def end_proxy(meeting_id: str):
         "transcript_turns": len(session["transcript"]),
     }
 
-@app.get("/app", response_class=HTMLResponse)
+@app.api_route("/app", methods=["GET", "HEAD"], response_class=HTMLResponse)
 def zoom_app():
     try:
         with open("static/index.html") as f:
@@ -489,7 +577,7 @@ def zoom_app():
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return RedirectResponse("/app")
 

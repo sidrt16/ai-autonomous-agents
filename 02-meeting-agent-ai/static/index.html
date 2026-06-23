@@ -73,7 +73,8 @@
     <div id="zoom-status" style="font-size:12px;padding:8px;background:#f0f7ff;border-radius:4px;border-left:3px solid #3b5bdb;">
       Initializing...
     </div>
-    <button class="btn btn-primary" id="btn-zoom-signin" onclick="window.location.href='/auth/zoom/login'" style="display:none;margin-top:8px">Sign in with Zoom</button>
+    <button class="btn btn-primary" id="btn-zoom-signin" onclick="signInWithZoom()" style="display:none;margin-top:8px">Sign in with Zoom</button>
+    <button class="btn btn-secondary" id="btn-zoom-refresh" onclick="loadMe()" style="display:none;margin-top:8px">I've signed in — refresh</button>
   </div>
 
   <div class="card">
@@ -324,6 +325,17 @@ function setZoomStatus(msg, kind = 'info') {
   el.style.background = bg;
 }
 
+function signInWithZoom() {
+  // Same proven pattern as Connect Google/Outlook: Zoom's embedded app
+  // panel blocks plain top-level navigation (window.location.href) entirely,
+  // but does allow opening a new window/tab. Sign-in happens there; once it
+  // completes, the user comes back here and clicks "I've signed in — refresh".
+  window.open('/auth/zoom/login', '_blank');
+  document.getElementById('btn-zoom-refresh').style.display = 'block';
+  setZoomStatus('Complete sign-in in the new window, then click refresh below', 'info');
+  setTimeout(loadMe, 3000); // also try automatically, in case it completes quickly
+}
+
 async function loadMe() {
   setZoomStatus('Checking session…', 'info');
   try {
@@ -337,12 +349,12 @@ async function loadMe() {
     if (p.communication_style) document.getElementById('profile-style').value = p.communication_style;
   } catch (e) {
     if (e.status === 401) {
-      // IMPORTANT: do NOT auto-redirect here. Zoom's embedded app panel only
-      // allows top-level navigation as a direct, synchronous result of a
-      // real user click — a programmatic redirect fired from page-load code
-      // (even via setTimeout) gets silently dropped, leaving the panel stuck
-      // forever with no error and no navigation. Show a real button instead
-      // so the navigation is a genuine user gesture.
+      // IMPORTANT: do NOT auto-redirect via window.location.href here. Zoom's
+      // embedded app panel blocks top-level self-navigation outright — even
+      // a direct click-triggered window.location.href assignment is silently
+      // dropped. window.open() (a new window/tab) is the mechanism Zoom's
+      // sandbox actually permits, matching the same pattern already proven
+      // to work for the Google/Outlook connect buttons below.
       setZoomStatus('Not signed in yet', 'info');
       document.getElementById('btn-zoom-signin').style.display = 'block';
     } else if (e.status === 0) {
@@ -359,6 +371,7 @@ function updateZoomStatus() {
   if (currentUser) {
     setZoomStatus(`✓ Authenticated as ${currentUser.profile?.name || 'User'}`, 'success');
     document.getElementById('btn-zoom-signin').style.display = 'none';
+    document.getElementById('btn-zoom-refresh').style.display = 'none';
   }
 }
 
@@ -638,6 +651,8 @@ window.addEventListener('load', async () => {
 // re-executes this script in a way that affects scoping) — inline handlers
 // always resolve through window, so this guarantees they're reachable.
 window.switchTab = switchTab;
+window.signInWithZoom = signInWithZoom;
+window.loadMe = loadMe;
 window.connectGoogle = connectGoogle;
 window.connectOutlook = connectOutlook;
 window.saveProfile = saveProfile;

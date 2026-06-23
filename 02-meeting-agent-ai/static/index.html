@@ -252,13 +252,22 @@ function switchTab(tab) {
 // requirement, without needing a calendar entry at all).
 // ---------------------------------------------------------------------------
 async function detectActiveZoomMeeting() {
+  // IMPORTANT: only request 'getMeetingContext' here — this is the exact
+  // capability set that has been verified to work. Requesting additional,
+  // unapproved capabilities (e.g. getRunningContext) can cause the Zoom
+  // client itself to reject the app's SDK handshake when running inside a
+  // live meeting, which surfaces as Zoom's own native "Something went
+  // wrong" panel — a failure that happens at the host level, before any
+  // try/catch in this page can do anything about it. Keep this minimal.
   try {
     if (typeof zoomSdk === 'undefined') return;
-    await zoomSdk.config({ capabilities: ['getMeetingContext', 'getRunningContext'] });
-    const running = await zoomSdk.getRunningContext().catch(() => null);
-    if (running && running.context && running.context !== 'inMeeting') {
-      return; // not currently in a live meeting (e.g. just browsing the app panel)
-    }
+    await zoomSdk.config({ capabilities: ['getMeetingContext'] });
+  } catch (err) {
+    console.warn('Zoom SDK config() unavailable or capability not approved for this app:', err);
+    return;
+  }
+
+  try {
     const ctx = await zoomSdk.getMeetingContext();
     if (ctx && ctx.meetingID) {
       zoomMeetingContext = {
@@ -274,9 +283,9 @@ async function detectActiveZoomMeeting() {
       banner.style.display = 'block';
     }
   } catch (err) {
-    // Not every Zoom client/version supports these capabilities — fail silently,
+    // Not every Zoom client/version/surface supports this — fail silently,
     // this is a convenience enhancement, not a requirement for the app to work.
-    console.warn('Zoom meeting-context detection unavailable:', err);
+    console.warn('zoomSdk.getMeetingContext() unavailable:', err);
   }
 }
 

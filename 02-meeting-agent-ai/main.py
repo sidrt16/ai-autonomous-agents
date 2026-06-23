@@ -285,7 +285,15 @@ def decrypt_zoom_app_context(b64_context: str) -> Optional[dict]:
         missing = len(padded) % 4
         if missing:
             padded += "=" * (4 - missing)
+        # urlsafe_b64decode is used deliberately: it is a strict superset of
+        # standard b64decode (it correctly translates -/_ to +//, while
+        # passing literal +// through unchanged), so it handles either
+        # alphabet correctly. Standard b64decode silently DISCARDS any -/_
+        # characters it doesn't recognize (Python's default validate=False)
+        # rather than erroring — which would corrupt the byte stream without
+        # any visible failure. Verified empirically; do not "simplify" this.
         raw = base64.urlsafe_b64decode(padded)
+        logger.info(f"X-Zoom-App-Context: decoded {len(raw)} raw bytes from {len(b64_context)} b64 chars")
 
         iv_length = raw[0]
         pos = 1
@@ -300,6 +308,14 @@ def decrypt_zoom_app_context(b64_context: str) -> Optional[dict]:
         pos += 4
         body = raw[pos:pos + cipher_length]
         tag = raw[pos + cipher_length:pos + cipher_length + 16]
+
+        expected_total = 1 + iv_length + 2 + aad_length + 4 + cipher_length + 16
+        logger.info(
+            f"X-Zoom-App-Context parsed: iv_length={iv_length} aad_length={aad_length} "
+            f"cipher_length={cipher_length} tag_actual_len={len(tag)} "
+            f"raw_total={len(raw)} expected_total={expected_total} "
+            f"(mismatch={'YES — parsing is misaligned' if len(raw) != expected_total else 'no, sizes line up'})"
+        )
 
         key = hashlib.sha256(settings.ZOOM_CLIENT_SECRET.encode("utf-8")).digest()
         plaintext = AESGCM(key).decrypt(iv, body + tag, aad)

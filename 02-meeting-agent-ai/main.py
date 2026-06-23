@@ -38,6 +38,7 @@ try:
     from fastapi.staticfiles import StaticFiles
     from fastapi.middleware.cors import CORSMiddleware
     from starlette.requests import Request as _Request
+    from starlette.middleware.base import BaseHTTPMiddleware
     from pydantic import BaseModel
     logger.info("✓ FastAPI imported")
 except Exception as e:
@@ -127,6 +128,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """
+    Restored from the last known-working deployment. Explicitly allowlists
+    appssdk.zoom.us for script-src/connect-src so the Zoom Apps SDK script
+    (loaded in static/index.html) and its calls back to the Zoom client are
+    never blocked, including when the app is opened from inside a live
+    meeting where Zoom's own client may be stricter about what it'll render.
+    """
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://appssdk.zoom.us; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self' https://appssdk.zoom.us"
+        )
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Mount static files if they exist
 if os.path.exists("static"):

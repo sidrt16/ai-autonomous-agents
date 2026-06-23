@@ -1,47 +1,113 @@
 """
-Meeting Proxy Agent — Complete Production Backend
-Integrates all real modules: zoom_auth, google_client, outlook_client, user_store, agent, prompt_builder
+Meeting Proxy Agent — Production Backend
+Fully integrated with all real modules + robust error handling
 """
 import os
+import sys
 import secrets
 import logging
 from typing import Optional
-from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Cookie
-from fastapi.responses import RedirectResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
-# Real modules from your repo
-from config import settings
-from zoom_auth import (
-    get_zoom_auth_url, exchange_zoom_code, get_zoom_user,
-    make_session_token, read_session_token, SESSION_COOKIE, SESSION_MAX_AGE,
-    make_connect_token, read_connect_token, CONNECT_TOKEN_MAX_AGE,
+# Configure logging FIRST
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-from user_store import (
-    get_user, set_user, get_user_profile, set_user_profile,
-)
-from google_client import (
-    get_login_url as google_get_login_url,
-    handle_callback as google_handle_callback,
-    list_upcoming as google_list_upcoming,
-)
-from outlook_client import (
-    get_login_url as outlook_get_login_url,
-    handle_callback as outlook_handle_callback,
-    list_upcoming as outlook_list_upcoming,
-)
-from agent import respond_to_turn, produce_deliverables
-from prompt_builder import build_system_prompt
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# FastAPI Setup
+logger.info("=" * 60)
+logger.info("Meeting Proxy Agent Starting")
+logger.info("=" * 60)
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Working directory: {os.getcwd()}")
+
+# Check critical files/directories exist
+if not os.path.exists("static"):
+    logger.warning("static/ directory not found - creating it")
+    os.makedirs("static", exist_ok=True)
+
+if not os.path.exists("static/index.html"):
+    logger.warning("static/index.html not found - app will fail to load UI")
+
+# Now import FastAPI
+try:
+    from fastapi import FastAPI, HTTPException, Cookie
+    from fastapi.responses import RedirectResponse, HTMLResponse
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
+    logger.info("✓ FastAPI imported")
+except Exception as e:
+    logger.error(f"✗ Failed to import FastAPI: {e}")
+    raise
+
+# Try importing all real modules with detailed error reporting
+try:
+    from config import settings
+    logger.info(f"✓ config imported (APP_SECRET_KEY set: {bool(settings.APP_SECRET_KEY)})")
+except Exception as e:
+    logger.error(f"✗ config import failed: {e}")
+    raise
+
+try:
+    from zoom_auth import (
+        get_zoom_auth_url, exchange_zoom_code, get_zoom_user,
+        make_session_token, read_session_token, SESSION_COOKIE, SESSION_MAX_AGE,
+        make_connect_token, read_connect_token, CONNECT_TOKEN_MAX_AGE,
+    )
+    logger.info("✓ zoom_auth imported")
+except Exception as e:
+    logger.error(f"✗ zoom_auth import failed: {e}")
+    raise
+
+try:
+    from user_store import get_user, set_user, get_user_profile, set_user_profile
+    logger.info("✓ user_store imported")
+except Exception as e:
+    logger.error(f"✗ user_store import failed: {e}")
+    raise
+
+try:
+    from google_client import (
+        get_login_url as google_get_login_url,
+        handle_callback as google_handle_callback,
+        list_upcoming as google_list_upcoming,
+    )
+    logger.info("✓ google_client imported")
+except Exception as e:
+    logger.error(f"✗ google_client import failed: {e}")
+    raise
+
+try:
+    from outlook_client import (
+        get_login_url as outlook_get_login_url,
+        handle_callback as outlook_handle_callback,
+        list_upcoming as outlook_list_upcoming,
+    )
+    logger.info("✓ outlook_client imported")
+except Exception as e:
+    logger.error(f"✗ outlook_client import failed: {e}")
+    raise
+
+try:
+    from agent import respond_to_turn, produce_deliverables
+    logger.info("✓ agent imported")
+except Exception as e:
+    logger.error(f"✗ agent import failed: {e}")
+    raise
+
+try:
+    from prompt_builder import build_system_prompt
+    logger.info("✓ prompt_builder imported")
+except Exception as e:
+    logger.error(f"✗ prompt_builder import failed: {e}")
+    raise
+
+logger.info("=" * 60)
+logger.info("All modules imported successfully!")
+logger.info("=" * 60)
+
+# Now initialize FastAPI
 app = FastAPI(title="Meeting Proxy Agent", version="1.0.0")
 
 app.add_middleware(
@@ -52,10 +118,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files if they exist
 if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+    try:
+        app.mount("/static", StaticFiles(directory="static"), name="static")
+        logger.info("✓ Static files mounted")
+    except Exception as e:
+        logger.warning(f"Could not mount static files: {e}")
 
-# Runtime State
+# Runtime state
 _sessions = {}
 _meeting_contexts = {}
 _active_meetings = {}
@@ -124,7 +195,7 @@ p {{ font-size:13px; color:#666; line-height:1.5; }}
 </body></html>"""
     return HTMLResponse(content=html)
 
-# Health & Status
+# Routes
 @app.get("/health")
 def health():
     return {"status": "ok", "version": "1.0.0"}
@@ -132,15 +203,14 @@ def health():
 @app.get("/status")
 def status():
     return {
-        "backend": "running",
+        "status": "running",
+        "version": "1.0.0",
         "zoom_configured": bool(settings.ZOOM_CLIENT_ID),
         "google_configured": bool(settings.GOOGLE_CLIENT_ID),
         "outlook_configured": bool(settings.MS_CLIENT_ID),
         "anthropic_configured": bool(settings.ANTHROPIC_API_KEY),
-        "timestamp": datetime.utcnow().isoformat(),
     }
 
-# Phase 1: Setup
 @app.get("/auth/zoom/login")
 def zoom_login():
     state = secrets.token_urlsafe(16)
@@ -164,23 +234,22 @@ def zoom_callback(code: str, state: Optional[str] = None):
             set_user_profile(user_id, {
                 "name": zoom_user.get("display_name", "User"),
                 "email": zoom_user.get("email", ""),
-                "zoom_user_id": user_id,
             })
         
         session_token = make_session_token(user_id)
         response = RedirectResponse("/app")
         response.set_cookie(SESSION_COOKIE, session_token, httponly=True, samesite="lax", max_age=SESSION_MAX_AGE)
+        logger.info(f"Zoom auth successful for {user_id}")
         return response
     except Exception as e:
-        logger.error(f"Zoom OAuth failed: {e}")
-        raise HTTPException(400, f"Zoom authentication failed: {str(e)}")
+        logger.error(f"Zoom callback failed: {e}")
+        raise HTTPException(400, f"Zoom auth failed: {str(e)}")
 
 @app.get("/api/me")
 def get_me(mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
     profile = get_user_profile(user_id) or {}
     user_data = get_user(user_id) or {}
-    
     return {
         "user_id": user_id,
         "profile": profile,
@@ -192,7 +261,7 @@ def get_me(mp_session: Optional[str] = Cookie(None)):
 def save_profile(profile: ProfileData, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
     set_user_profile(user_id, profile.dict())
-    logger.info(f"Saved profile for {user_id}")
+    logger.info(f"Profile saved for {user_id}")
     return {"status": "saved"}
 
 @app.get("/api/connect-token")
@@ -201,71 +270,66 @@ def connect_token(mp_session: Optional[str] = Cookie(None)):
     token = make_connect_token(user_id)
     return {"connect_token": token, "expires_in": CONNECT_TOKEN_MAX_AGE}
 
-# Google OAuth
 @app.get("/auth/google/login")
 def google_login(write: bool = False, connect_token: Optional[str] = None, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id_for_oauth_start(mp_session, connect_token)
-    redirect_uri = settings.GOOGLE_REDIRECT_URI
     state = secrets.token_urlsafe(16)
     _sessions[state] = user_id
     
     try:
-        url = google_get_login_url(include_write_scope=write, redirect_uri=redirect_uri, state=state)
+        url = google_get_login_url(include_write_scope=write, redirect_uri=settings.GOOGLE_REDIRECT_URI, state=state)
         return RedirectResponse(url)
     except Exception as e:
         logger.error(f"Google login failed: {e}")
-        raise HTTPException(400, f"Could not start Google auth: {str(e)}")
+        raise HTTPException(400, str(e))
 
 @app.get("/auth/google/callback")
 def google_callback(code: str, state: str = "", write: bool = False):
     user_id = _sessions.pop(state, None)
     if not user_id:
-        return _connect_result_page(False, "Google Calendar", "Link expired or already used.")
+        return _connect_result_page(False, "Google Calendar", "Link expired.")
     
     try:
         token_data = google_handle_callback(code, include_write_scope=write, redirect_uri=settings.GOOGLE_REDIRECT_URI)
         user_data = get_user(user_id) or {}
         user_data["google_token"] = token_data
         set_user(user_id, user_data)
-        logger.info(f"Google Calendar connected for {user_id}")
+        logger.info(f"Google connected for {user_id}")
         return _connect_result_page(True, "Google Calendar")
     except Exception as e:
         logger.error(f"Google callback failed: {e}")
         return _connect_result_page(False, "Google Calendar", str(e))
 
-# Outlook OAuth
 @app.get("/auth/outlook/login")
 def outlook_login(write: bool = False, connect_token: Optional[str] = None, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id_for_oauth_start(mp_session, connect_token)
-    redirect_uri = settings.MS_REDIRECT_URI
     state = secrets.token_urlsafe(16)
     _sessions[state] = user_id
     
     try:
-        url = outlook_get_login_url(include_write_scope=write, redirect_uri=redirect_uri, state=state)
+        url = outlook_get_login_url(include_write_scope=write, redirect_uri=settings.MS_REDIRECT_URI, state=state)
         return RedirectResponse(url)
     except Exception as e:
         logger.error(f"Outlook login failed: {e}")
-        raise HTTPException(400, f"Could not start Outlook auth: {str(e)}")
+        raise HTTPException(400, str(e))
 
 @app.get("/auth/outlook/callback")
 def outlook_callback(code: str, state: str = "", write: bool = False):
     user_id = _sessions.pop(state, None)
     if not user_id:
-        return _connect_result_page(False, "Outlook Calendar", "Link expired or already used.")
+        return _connect_result_page(False, "Outlook Calendar", "Link expired.")
     
     try:
         token_data = outlook_handle_callback(code, include_write_scope=write, redirect_uri=settings.MS_REDIRECT_URI)
         user_data = get_user(user_id) or {}
         user_data["outlook_token"] = token_data
         set_user(user_id, user_data)
-        logger.info(f"Outlook Calendar connected for {user_id}")
+        logger.info(f"Outlook connected for {user_id}")
         return _connect_result_page(True, "Outlook Calendar")
     except Exception as e:
         logger.error(f"Outlook callback failed: {e}")
         return _connect_result_page(False, "Outlook Calendar", str(e))
 
-# Phase 2: Context Prep
 @app.get("/api/meetings/upcoming")
 def upcoming_meetings(hours: int = 48, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
@@ -277,30 +341,39 @@ def upcoming_meetings(hours: int = 48, mp_session: Optional[str] = Cookie(None))
     if google_token:
         try:
             meetings = google_list_upcoming(google_token, hours)
-            results.extend(meetings if meetings else [])
+            if meetings:
+                results.extend([
+                    m.dict() if hasattr(m, 'dict') else 
+                    m.model_dump() if hasattr(m, 'model_dump') else 
+                    m 
+                    for m in meetings
+                ])
         except Exception as e:
-            logger.error(f"Google meetings fetch failed: {e}")
+            logger.error(f"Google fetch failed: {e}")
             errors["google"] = str(e)
 
     outlook_token = user_data.get("outlook_token")
     if outlook_token:
         try:
             meetings = outlook_list_upcoming(outlook_token, hours)
-            results.extend(meetings if meetings else [])
+            if meetings:
+                results.extend([
+                    m.dict() if hasattr(m, 'dict') else 
+                    m.model_dump() if hasattr(m, 'model_dump') else 
+                    m 
+                    for m in meetings
+                ])
         except Exception as e:
-            logger.error(f"Outlook meetings fetch failed: {e}")
+            logger.error(f"Outlook fetch failed: {e}")
             errors["outlook"] = str(e)
 
-    results.sort(key=lambda m: m.get("start", ""))
-    
+    results.sort(key=lambda m: m.get("start", "") if isinstance(m, dict) else getattr(m, "start", ""))
     return {"meetings": results, "errors": errors}
-
 @app.get("/api/meetings/{meeting_id}/context")
 def get_meeting_context(meeting_id: str, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
     contexts = _meeting_contexts.get(user_id, {})
     context = contexts.get(meeting_id)
-    
     if not context:
         return {"meeting_id": meeting_id, "goals": None, "avoid": None}
     return context
@@ -310,13 +383,10 @@ def save_meeting_context(meeting_id: str, context: MeetingContext, mp_session: O
     user_id = _get_user_id(mp_session)
     if user_id not in _meeting_contexts:
         _meeting_contexts[user_id] = {}
-    
     _meeting_contexts[user_id][meeting_id] = context.dict()
-    logger.info(f"Saved context for meeting {meeting_id}")
-    
+    logger.info(f"Context saved for {meeting_id}")
     return {"status": "saved", "meeting_id": meeting_id}
 
-# Phase 3: Live Execution
 @app.post("/api/proxy/start")
 def start_proxy(meeting_id: str, context: Optional[MeetingContext] = None, mp_session: Optional[str] = Cookie(None)):
     user_id = _get_user_id(mp_session)
@@ -349,25 +419,25 @@ def start_proxy(meeting_id: str, context: Optional[MeetingContext] = None, mp_se
             flag_everything=False,
         )
     except Exception as e:
-        logger.error(f"Prompt building failed: {e}")
-        system_prompt = f"Meeting: {context.title}\nGoals: {context.goals}\nBoundaries: {context.avoid}"
+        logger.error(f"Prompt build failed: {e}")
+        system_prompt = f"Meeting: {context.title}"
     
     _active_meetings[meeting_id] = {
         "user_id": user_id,
-        "meeting_context": context.dict(),
+        "context": context.dict(),
         "system_prompt": system_prompt,
         "history": [],
         "transcript": [],
     }
     
-    logger.info(f"Proxy started for meeting {meeting_id}")
+    logger.info(f"Proxy started for {meeting_id}")
     return {"status": "agent started", "meeting_id": meeting_id}
 
 @app.post("/api/proxy/transcript/{meeting_id}")
 def inject_transcript(meeting_id: str, turn: TranscriptTurn):
     session = _active_meetings.get(meeting_id)
     if not session:
-        raise HTTPException(400, f"No active proxy for meeting {meeting_id}")
+        raise HTTPException(400, f"No active proxy for {meeting_id}")
     
     session["transcript"].append({"speaker": turn.speaker, "text": turn.text})
     
@@ -394,43 +464,44 @@ def end_proxy(meeting_id: str):
     try:
         deliverables = produce_deliverables(session["system_prompt"], session["history"])
     except Exception as e:
-        logger.error(f"Deliverables generation failed: {e}")
+        logger.error(f"Deliverables failed: {e}")
         deliverables = f"Error: {str(e)}"
     
-    result = {
+    _active_meetings.pop(meeting_id, None)
+    logger.info(f"Proxy ended for {meeting_id}")
+    
+    return {
         "meeting_id": meeting_id,
         "deliverables": deliverables,
         "transcript_turns": len(session["transcript"]),
     }
-    
-    _active_meetings.pop(meeting_id, None)
-    logger.info(f"Proxy ended for meeting {meeting_id}")
-    
-    return result
 
-# UI Delivery
 @app.get("/app", response_class=HTMLResponse)
 def zoom_app():
     try:
         with open("static/index.html") as f:
             html = f.read()
     except FileNotFoundError:
-        html = "<h1>App UI not found.</h1>"
+        html = "<h1>App UI not found</h1>"
     
     return HTMLResponse(
         content=html,
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        }
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
     )
 
 @app.get("/")
 def root():
     return RedirectResponse("/app")
 
+@app.on_event("startup")
+def startup():
+    logger.info("=" * 60)
+    logger.info("Application Started Successfully!")
+    logger.info(f"Routes available: {len(app.routes)}")
+    logger.info("=" * 60)
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
+    logger.info(f"Starting uvicorn on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

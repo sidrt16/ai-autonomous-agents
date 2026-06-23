@@ -205,7 +205,23 @@ let currentMeeting = null;      // meeting_id selected for Live Execution
 let zoomMeetingContext = null;  // populated by zoomSdk.getMeetingContext() if available
 
 async function api(path, opts = {}) {
-  const r = await fetch(API + path, { credentials: 'include', ...opts });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000); // generous — Render free tier can cold-start slowly
+  let r;
+  try {
+    r = await fetch(API + path, { credentials: 'include', signal: controller.signal, ...opts });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      const timeoutErr = new Error(`Request to ${path} timed out after 25s — server may be cold-starting (try again) or unreachable`);
+      timeoutErr.status = 0;
+      throw timeoutErr;
+    }
+    const networkErr = new Error(`Network error calling ${path}: ${err.message}`);
+    networkErr.status = 0;
+    throw networkErr;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   if (!r.ok) {
     const e = await r.json().catch(() => ({ detail: r.statusText }));
     const err = new Error(e.detail || r.statusText);
@@ -302,7 +318,21 @@ function useZoomLiveMeeting() {
 // ---------------------------------------------------------------------------
 // Phase 1: Setup
 // ---------------------------------------------------------------------------
+function setZoomStatus(msg, kind = 'info') {
+  const el = document.getElementById('zoom-status');
+  el.textContent = msg;
+  const colors = {
+    info: ['#3b5bdb', '#f0f7ff'],
+    error: ['#e03131', '#fdf2f2'],
+    success: ['#22c55e', '#f0fdf4'],
+  };
+  const [border, bg] = colors[kind] || colors.info;
+  el.style.borderLeftColor = border;
+  el.style.background = bg;
+}
+
 async function loadMe() {
+  setZoomStatus('Checking session…', 'info');
   try {
     currentUser = await api('/me');
     updateZoomStatus();
@@ -314,8 +344,13 @@ async function loadMe() {
     if (p.communication_style) document.getElementById('profile-style').value = p.communication_style;
   } catch (e) {
     if (e.status === 401) {
-      window.location.href = '/auth/zoom/login';
+      setZoomStatus('No active session — redirecting to Zoom sign-in…', 'info');
+      setTimeout(() => { window.location.href = '/auth/zoom/login'; }, 600);
+    } else if (e.status === 0) {
+      setZoomStatus('⚠ ' + e.message, 'error');
+      showError(e.message, 'setup');
     } else {
+      setZoomStatus('⚠ Failed to load session (see error below)', 'error');
       showError('Failed to load user: ' + e.message, 'setup');
     }
   }
@@ -323,10 +358,7 @@ async function loadMe() {
 
 function updateZoomStatus() {
   if (currentUser) {
-    const el = document.getElementById('zoom-status');
-    el.innerHTML = `✓ Authenticated as ${currentUser.profile?.name || 'User'}`;
-    el.style.borderLeftColor = '#22c55e';
-    el.style.background = '#f0fdf4';
+    setZoomStatus(`✓ Authenticated as ${currentUser.profile?.name || 'User'}`, 'success');
   }
 }
 

@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -83,10 +82,13 @@
   <div class="card">
     <span class="label">Calendar Integration</span>
     <div style="display:flex;gap:8px;margin-bottom:8px">
-      <button class="btn btn-secondary btn-small" id="btn-google" onclick="connectGoogle()">Connect Google</button>
-      <button class="btn btn-secondary btn-small" id="btn-outlook" onclick="connectOutlook()">Connect Outlook</button>
+      <a class="btn btn-secondary btn-small" id="btn-google" href="#" target="_blank" rel="noopener noreferrer"
+         style="text-decoration:none;display:inline-block;width:auto" onclick="onConnectClicked(event,'google')">Connect Google</a>
+      <a class="btn btn-secondary btn-small" id="btn-outlook" href="#" target="_blank" rel="noopener noreferrer"
+         style="text-decoration:none;display:inline-block;width:auto" onclick="onConnectClicked(event,'outlook')">Connect Outlook</a>
     </div>
     <div id="calendar-status" style="font-size:11px;color:#666">Calendars: checking…</div>
+    <button class="btn btn-secondary" id="btn-calendar-refresh" onclick="loadMe()" style="display:none;margin-top:8px">I've connected — refresh</button>
   </div>
 
   <div class="card">
@@ -352,14 +354,21 @@ async function loadMe() {
     if (p.title) document.getElementById('profile-title').value = p.title;
     if (p.company) document.getElementById('profile-company').value = p.company;
     if (p.communication_style) document.getElementById('profile-style').value = p.communication_style;
+    // Proactively (re)fetch the connect-token and set real <a href> values
+    // now, ahead of any click — see refreshConnectLinks() for why this must
+    // happen here rather than inside the click handler.
+    refreshConnectLinks();
+    if (!_connectLinksTimer) {
+      _connectLinksTimer = setInterval(refreshConnectLinks, 8 * 60 * 1000); // tokens expire in 10 min
+    }
   } catch (e) {
     if (e.status === 401) {
-      // IMPORTANT: do NOT auto-redirect via window.location.href here. Zoom's
-      // embedded app panel blocks top-level self-navigation outright — even
-      // a direct click-triggered window.location.href assignment is silently
-      // dropped. window.open() (a new window/tab) is the mechanism Zoom's
-      // sandbox actually permits, matching the same pattern already proven
-      // to work for the Google/Outlook connect buttons below.
+      // IMPORTANT: do NOT auto-redirect via window.location.href here, and do
+      // NOT use window.open() either — both were tested and found to be
+      // silently blocked inside Zoom's embedded app panel. The only thing
+      // proven to work is a real <a href target="_blank"> element clicked
+      // directly by the user — see btn-zoom-signin below, and the matching
+      // fix applied to the Connect Google/Outlook links.
       setZoomStatus('Not signed in yet', 'info');
       document.getElementById('btn-zoom-signin').style.display = 'block';
     } else if (e.status === 0) {
@@ -387,28 +396,45 @@ function updateCalendarStatus() {
   document.getElementById('calendar-status').textContent = `Calendars: ${status}`;
   document.getElementById('btn-google').textContent = google ? '✓ Google Connected' : 'Connect Google';
   document.getElementById('btn-outlook').textContent = outlook ? '✓ Outlook Connected' : 'Connect Outlook';
+  document.getElementById('btn-calendar-refresh').style.display = (google && outlook) ? 'none' : 'block';
 }
 
-async function connectGoogle() {
+let _connectLinksTimer = null;
+
+async function refreshConnectLinks() {
+  // IMPORTANT: this fetches the connect-token and sets the real <a href>
+  // attributes PROACTIVELY, ahead of any click — not inside the click
+  // handler. Same lesson as the Zoom sign-in fix: a real anchor click is
+  // honored by Zoom's embedded panel, but only when the href is already
+  // sitting there ready to go. An async fetch happening *inside* the click
+  // handler (fetch-then-navigate) reintroduces the same kind of delay that
+  // broke window.open()/window.location.href earlier, so we avoid that
+  // shape entirely here.
   try {
     const tok = await api('/connect-token');
-    const url = `/auth/google/login?write=true&connect_token=${encodeURIComponent(tok.connect_token)}`;
-    window.open(url, '_blank');
-    setTimeout(loadMe, 2500);
+    const ct = encodeURIComponent(tok.connect_token);
+    document.getElementById('btn-google').href = `/auth/google/login?write=true&connect_token=${ct}`;
+    document.getElementById('btn-outlook').href = `/auth/outlook/login?connect_token=${ct}`;
   } catch (e) {
-    showError('Could not start Google connection: ' + e.message, 'setup');
+    // Not authenticated yet, or token fetch failed — links stay as '#'
+    // until the next successful refresh (e.g. right after loadMe() succeeds).
+    console.warn('Could not refresh connect links yet:', e.message);
   }
 }
 
-async function connectOutlook() {
-  try {
-    const tok = await api('/connect-token');
-    const url = `/auth/outlook/login?connect_token=${encodeURIComponent(tok.connect_token)}`;
-    window.open(url, '_blank');
-    setTimeout(loadMe, 2500);
-  } catch (e) {
-    showError('Could not start Outlook connection: ' + e.message, 'setup');
+function onConnectClicked(event, provider) {
+  // Navigation itself is handled natively by the <a href target="_blank">
+  // element — this handler only updates status text afterwards. If the
+  // href is still '#' (token wasn't ready yet), stop the no-op navigation
+  // and try fetching it right now instead.
+  const el = document.getElementById(provider === 'google' ? 'btn-google' : 'btn-outlook');
+  if (!el.href || el.href.endsWith('#')) {
+    event.preventDefault();
+    refreshConnectLinks().then(() => showError('Link wasn\'t ready — try clicking again now', 'setup'));
+    return;
   }
+  document.getElementById('btn-calendar-refresh').style.display = 'block';
+  setTimeout(loadMe, 3000); // also try automatically, in case it completes quickly
 }
 
 async function saveProfile() {
@@ -658,8 +684,7 @@ window.addEventListener('load', async () => {
 window.switchTab = switchTab;
 window.onZoomSigninClicked = onZoomSigninClicked;
 window.loadMe = loadMe;
-window.connectGoogle = connectGoogle;
-window.connectOutlook = connectOutlook;
+window.onConnectClicked = onConnectClicked;
 window.saveProfile = saveProfile;
 window.loadUpcomingMeetings = loadUpcomingMeetings;
 window.editContext = editContext;

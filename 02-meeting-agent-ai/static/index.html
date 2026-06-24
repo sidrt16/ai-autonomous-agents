@@ -89,6 +89,7 @@
     </div>
     <div id="calendar-status" style="font-size:11px;color:#666">Calendars: checking…</div>
     <button class="btn btn-secondary" id="btn-calendar-refresh" onclick="loadMe()" style="display:none;margin-top:8px">I've connected — refresh</button>
+    <div id="calendar-link-status" style="font-size:11px;color:#e03131;margin-top:6px"></div>
   </div>
 
   <div class="card">
@@ -401,6 +402,8 @@ function updateCalendarStatus() {
 
 let _connectLinksTimer = null;
 
+let _connectLinksRetryTimer = null;
+
 async function refreshConnectLinks() {
   // IMPORTANT: this fetches the connect-token and sets the real <a href>
   // attributes PROACTIVELY, ahead of any click — not inside the click
@@ -415,10 +418,20 @@ async function refreshConnectLinks() {
     const ct = encodeURIComponent(tok.connect_token);
     document.getElementById('btn-google').href = `/auth/google/login?write=true&connect_token=${ct}`;
     document.getElementById('btn-outlook').href = `/auth/outlook/login?connect_token=${ct}`;
+    document.getElementById('calendar-link-status').textContent = '';
+    if (_connectLinksRetryTimer) { clearTimeout(_connectLinksRetryTimer); _connectLinksRetryTimer = null; }
   } catch (e) {
-    // Not authenticated yet, or token fetch failed — links stay as '#'
-    // until the next successful refresh (e.g. right after loadMe() succeeds).
-    console.warn('Could not refresh connect links yet:', e.message);
+    // VISIBLE failure — this matters because inside the real Zoom client
+    // there is no console to see a silent warning in. If this happens, the
+    // links stay at href="#" and a click produces literally nothing visible,
+    // which looks identical to "the button is broken" from the user's side.
+    document.getElementById('calendar-link-status').innerHTML =
+      `⚠ Couldn't prepare connect links (${e.message}). <a href="#" onclick="refreshConnectLinks();return false;" style="color:#e03131;text-decoration:underline;">Retry now</a>`;
+    // Keep retrying quietly in the background too, in case the session
+    // recovers on its own (e.g. after the cookie issue we saw earlier).
+    if (!_connectLinksRetryTimer) {
+      _connectLinksRetryTimer = setTimeout(() => { _connectLinksRetryTimer = null; refreshConnectLinks(); }, 5000);
+    }
   }
 }
 
@@ -430,7 +443,8 @@ function onConnectClicked(event, provider) {
   const el = document.getElementById(provider === 'google' ? 'btn-google' : 'btn-outlook');
   if (!el.href || el.href.endsWith('#')) {
     event.preventDefault();
-    refreshConnectLinks().then(() => showError('Link wasn\'t ready — try clicking again now', 'setup'));
+    document.getElementById('calendar-link-status').textContent = 'Link wasn\'t ready yet — preparing it now, click again in a moment…';
+    refreshConnectLinks();
     return;
   }
   document.getElementById('btn-calendar-refresh').style.display = 'block';
@@ -685,6 +699,7 @@ window.switchTab = switchTab;
 window.onZoomSigninClicked = onZoomSigninClicked;
 window.loadMe = loadMe;
 window.onConnectClicked = onConnectClicked;
+window.refreshConnectLinks = refreshConnectLinks;
 window.saveProfile = saveProfile;
 window.loadUpcomingMeetings = loadUpcomingMeetings;
 window.editContext = editContext;

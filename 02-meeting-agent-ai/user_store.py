@@ -43,3 +43,15 @@ def set_user_template(zoom_user_id: str, series_key: str, template: dict) -> Non
     templates = get_user_templates(zoom_user_id)
     templates[series_key] = template
     set_user(zoom_user_id, {"templates": templates})
+
+
+def delete_user_data(zoom_user_id: str) -> None:
+    """
+    Permanently removes everything stored for this user (google_token,
+    outlook_token, profile, templates — the whole record) in one shot,
+    since get_user/set_user keep all of it under a single key.
+
+    Required for Zoom's mandatory data-deletion on app deauthorization/
+    uninstall — see /webhook/zoom/deauth in main.py.
+    """
+    _store.delete(zoom_user_id)

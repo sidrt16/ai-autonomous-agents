@@ -58,7 +58,14 @@ def exchange_zoom_code(code: str) -> dict:
             "redirect_uri": settings.ZOOM_REDIRECT_URI,
         },
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        # raise_for_status() alone only gives "400 Client Error: Bad Request
+        # for url: ..." — Zoom's actual reason (invalid_grant, invalid
+        # redirect_uri, invalid_client, etc.) is in the response body, and
+        # without it this failure is nearly impossible to diagnose remotely.
+        raise RuntimeError(
+            f"Zoom token exchange failed ({resp.status_code}): {resp.text}"
+        )
     return resp.json()
 
 

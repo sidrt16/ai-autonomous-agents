@@ -21,6 +21,9 @@ class Settings:
     ZOOM_CLIENT_ID = os.getenv("ZOOM_CLIENT_ID", "")
     ZOOM_CLIENT_SECRET = os.getenv("ZOOM_CLIENT_SECRET", "")
     ZOOM_REDIRECT_URI = os.getenv("ZOOM_REDIRECT_URI", "http://localhost:8000/auth/zoom/callback")
+    # From Marketplace: Access > Token > Secret Token. Used to verify the
+    # x-zm-signature header on incoming webhooks (deauth, event subscriptions).
+    ZOOM_WEBHOOK_SECRET_TOKEN = os.getenv("ZOOM_WEBHOOK_SECRET_TOKEN", "")
 
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
     APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "")

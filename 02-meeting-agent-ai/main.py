@@ -9,6 +9,7 @@ import logging
 import traceback as _traceback
 import base64
 import hashlib
+import hmac
 import time
 from datetime import datetime
 from typing import Optional, List
@@ -36,13 +37,14 @@ if not os.path.exists("static/index.html"):
 
 # Now import FastAPI
 try:
-    from fastapi import FastAPI, HTTPException, Cookie
+    from fastapi import FastAPI, HTTPException, Cookie, Header
     from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.middleware.cors import CORSMiddleware
     from starlette.requests import Request as _Request
     from starlette.middleware.base import BaseHTTPMiddleware
     from pydantic import BaseModel
+    import httpx
     logger.info("✓ FastAPI imported")
 except Exception as e:
     logger.error(f"✗ Failed to import FastAPI: {e}")
@@ -68,7 +70,7 @@ except Exception as e:
     raise
 
 try:
-    from user_store import get_user, set_user, get_user_profile, set_user_profile
+    from user_store import get_user, set_user, get_user_profile, set_user_profile, delete_user_data
     logger.info("✓ user_store imported")
 except Exception as e:
     logger.error(f"✗ user_store import failed: {e}")
@@ -217,6 +219,24 @@ class ProfileData(BaseModel):
     company: Optional[str] = None
     communication_style: Optional[str] = "professional"
 
+class ZoomDeauthPayload(BaseModel):
+    """
+    Matches the real payload Zoom sends to a Deauthorization Notification
+    Endpoint URL. user_id/account_id are what cleanup actually needs; the
+    rest are included because Zoom sends them and the Data Compliance API
+    callback (_confirm_zoom_compliance) is required to echo them back.
+    """
+    user_id: str
+    account_id: str
+    client_id: Optional[str] = None
+    signature: Optional[str] = None
+    deauthorization_time: Optional[str] = None
+    user_data_retention: Optional[str] = None
+
+class ZoomDeauthEvent(BaseModel):
+    event: str
+    payload: ZoomDeauthPayload
+
 # Helpers
 def _get_user_id(mp_session: Optional[str]) -> str:
     if not mp_session:
@@ -331,6 +351,58 @@ def decrypt_zoom_app_context(b64_context: str) -> Optional[dict]:
         logger.warning(f"Failed to decrypt X-Zoom-App-Context: {e}")
         return None
 
+def cleanup_user_data(user_id: str) -> None:
+    """
+    Zoom-mandated cleanup on app deauthorization/uninstall. Deletes the
+    user's persisted record (tokens, profile, templates) via
+    user_store.delete_user_data, and clears any in-memory state main.py
+    itself tracks for them.
+    """
+    try:
+        delete_user_data(user_id)
+        logger.info(f"✓ Deleted all stored data for user_id={user_id}")
+    except Exception as e:
+        logger.error(f"✗ delete_user_data failed for user_id={user_id}: {e}")
+
+    _meeting_contexts.pop(user_id, None)
+    for meeting_id, session in list(_active_meetings.items()):
+        if session.get("user_id") == user_id:
+            _active_meetings.pop(meeting_id, None)
+            logger.info(f"Cleared active meeting session {meeting_id} for deauthorized user_id={user_id}")
+
+async def _confirm_zoom_compliance(payload: ZoomDeauthPayload) -> None:
+    """
+    POSTs back to Zoom's Data Compliance API to confirm cleanup is done, per
+    https://marketplace.zoom.us/docs/guides/publishing/data-compliance
+    Uses HTTP Basic Auth with ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET. Zoom expects
+    this within 10 days of the deauthorization event; failures are logged but
+    don't raise — the inbound webhook still gets ack'd with a 200 regardless
+    of whether this outbound confirmation succeeds.
+    """
+    body = {
+        "client_id": settings.ZOOM_CLIENT_ID,
+        "user_id": payload.user_id,
+        "account_id": payload.account_id,
+        "deauthorization_event_received": payload.dict(),
+        "compliance_completed": True,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://api.zoom.us/oauth/data/compliance",
+                json=body,
+                auth=(settings.ZOOM_CLIENT_ID, settings.ZOOM_CLIENT_SECRET),
+            )
+        if resp.status_code == 200:
+            logger.info(f"✓ Zoom Data Compliance API confirmed for user_id={payload.user_id}")
+        else:
+            logger.error(
+                f"✗ Zoom Data Compliance API returned {resp.status_code} for "
+                f"user_id={payload.user_id}: {resp.text}"
+            )
+    except Exception as e:
+        logger.error(f"✗ Failed to reach Zoom Data Compliance API for user_id={payload.user_id}: {e}")
+
 # Routes
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health():
@@ -380,6 +452,80 @@ def zoom_callback(code: str, state: Optional[str] = None):
     except Exception as e:
         logger.error(f"Zoom callback failed: {e}")
         raise HTTPException(400, f"Zoom auth failed: {str(e)}")
+
+@app.post("/webhook/zoom/deauth")
+async def zoom_deauthorization(
+    request: _Request,
+    x_zm_signature: Optional[str] = Header(None, alias="x-zm-signature"),
+    x_zm_request_timestamp: Optional[str] = Header(None, alias="x-zm-request-timestamp"),
+):
+    """
+    Zoom's required Deauthorization Notification Endpoint. Triggered when a
+    user removes/deauthorizes the app from the Marketplace. Verifies the
+    request, deletes the user's stored data, and confirms completion back
+    to Zoom's Data Compliance API. See:
+    https://developers.zoom.us/docs/integrations/end-user-auth/#deauthorization
+
+    Verification: Zoom retired the old "Verification Token" (compared as a
+    raw string in the Authorization header) in June 2025 — it no longer
+    appears anywhere in the Marketplace dashboard for this app. The current
+    method is HMAC-SHA256 over the raw request body, keyed with the app's
+    Secret Token (Access > Token page), compared against the x-zm-signature
+    header. See https://developers.zoom.us/docs/api/webhooks/#verify-webhook-events
+
+    We read the raw body ourselves (instead of letting FastAPI parse straight
+    into the Pydantic model) because the signature is computed over the exact
+    bytes Zoom sent — re-serializing the parsed JSON could change whitespace/
+    key order and silently break verification.
+
+    Known gap as of early 2026: some developers have reported deauthorization
+    notifications arriving without x-zm-signature/x-zm-request-timestamp at
+    all (see Zoom Developer Forum thread #142352) — if that happens here, it's
+    a Zoom-side platform issue, not a misconfiguration on our end.
+    """
+    raw_body = await request.body()
+
+    if not settings.ZOOM_WEBHOOK_SECRET_TOKEN:
+        logger.error("ZOOM_WEBHOOK_SECRET_TOKEN is not set — refusing deauth webhook calls")
+        raise HTTPException(500, "Server misconfigured: ZOOM_WEBHOOK_SECRET_TOKEN not set")
+
+    if not x_zm_signature or not x_zm_request_timestamp:
+        logger.warning(
+            "Deauth webhook rejected: missing x-zm-signature/x-zm-request-timestamp "
+            "headers (see known-gap note above if this happens consistently)"
+        )
+        raise HTTPException(401, "Unauthorized: missing signature headers")
+
+    message = f"v0:{x_zm_request_timestamp}:{raw_body.decode('utf-8')}"
+    computed_hash = hmac.new(
+        settings.ZOOM_WEBHOOK_SECRET_TOKEN.encode("utf-8"),
+        message.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    expected_signature = f"v0={computed_hash}"
+
+    if not hmac.compare_digest(expected_signature, x_zm_signature):
+        logger.warning("Deauth webhook rejected: x-zm-signature did not match")
+        raise HTTPException(401, "Unauthorized: signature mismatch")
+
+    try:
+        event = ZoomDeauthEvent.model_validate_json(raw_body)
+    except Exception as e:
+        logger.error(f"Deauth webhook: failed to parse payload: {e}")
+        raise HTTPException(400, "Malformed payload")
+
+    user_id = event.payload.user_id
+    account_id = event.payload.account_id
+    logger.info(f"Zoom deauthorization received: event={event.event} user_id={user_id} account_id={account_id}")
+
+    # 1. Delete everything we store for this user
+    cleanup_user_data(user_id)
+
+    # 2. Confirm compliance back to Zoom (failure here doesn't change our ack below)
+    await _confirm_zoom_compliance(event.payload)
+
+    # Zoom expects a 200 to acknowledge receipt of the webhook itself
+    return JSONResponse(status_code=200, content={"status": "received"})
 
 @app.get("/api/me")
 def get_me(mp_session: Optional[str] = Cookie(None)):
